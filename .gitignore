@@ -1,1 +1,11 @@
 AGENTS.md
+
+# 构建产物
+/ruport
+/c3
+
+# bpf2go 生成的绑定（make generate 产生）
+internal/bpf/*_bpfel.go
+internal/bpf/*_bpfel.o
+internal/bpf/*_bpfeb.go
+internal/bpf/*_bpfeb.o
