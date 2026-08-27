@@ -1,0 +1,73 @@
+cilium/ebpf 开发文档完成日志
+====================================
+时间: 2026-08-27 23:50:51
+分支: develop
+前置: 任务理解与方案见 log_20260827224837.txt，用户已确认
+      （多文件拆分结构 + 索引，章节范围无增删）
+
+一、交付内容（doc/ 目录，共 9 份 markdown，约 2800 行）
+----------------
+README.md                索引、阅读路径、约定（API 版本=v0.22.0）
+01-ebpf-overview.md      eBPF 技术背景：内核架构、VM/寄存器/指令集、
+                         verifier 工作原理与日志读法、程序类型表、map
+                         类型表、BTF/CO-RE、libbpf 与 cilium/ebpf 对照、
+                         内核版本速查表、最小对照示例
+02-cilium-ebpf-core.md   核心对象：Spec/实例二分、三种加载路径、
+                         LoadAndAssign 规则、Program.Run/Pin、verifier
+                         日志控制、全局变量重写(RewriteConstants/Variables)、
+                         Features 探测、memlock/权限、手写完整加载器示例
+03-bpf2go.md             全部命令行参数表（v0.22 实测）、go:generate 与
+                         Makefile 两种集成、生成文件逐段解剖、命名规则、
+                         -type 结构体生成规则表（pack/padding/位域限制）、
+                         生成物入库与否的取舍、libbpf skeleton 对照表
+04-maps.md               map 来源三路、类型选型表、CRUD 全 API、迭代
+                         语义（非快照）、批量 API、per-CPU 读写、ringbuf
+                         与 perf 完整示例、结构体一致性专题（pack/Go布局/
+                         字节序三步口诀/key 设计）
+05-links.md              挂载版图表、Link 接口语义、XDP 三模式、经典
+                         clsact netlink 全流程（含卸载顺序与生命周期
+                         警报）、tcx 对照、tracepoint/kprobe/fentry、
+                         生命周期一图流、挂载报错表、调试命令
+06-examples.md           三个可照抄运行的完整例子：XDP 包计数器
+                         （per-CPU map）、TC 端口改写+增量校验和
+                         （ruport 核心最小版）、ringbuf+tracepoint openat
+                         事件流；每个含全部源码、Makefile、运行验证步骤
+07-ruport-go-notes.md    本仓库逐模块解析：全景数据流图、common.h 契约、
+                         XDP/TC 逐段讲解（含校验和原理与端口学习闭环）、
+                         main.go 挂载链与清理顺序、control 字节序推导链、
+                         c3 包布局表、C↔Go API 对照表、常见修改落点
+08-troubleshooting.md    verifier 报错样例与修法（7 类）、权限/memlock、
+                         字节序/布局 bug 症状画像与三板斧、挂载残留与
+                         清理脚本、调试工具箱、Go 侧高频错误、ruport FAQ
+
+二、质量保障措施
+----------------
+1. 所有 cilium/ebpf API 签名（XDPOptions/KprobeOptions/Tracepoint 函数/
+   TCXOptions/CollectionOptions/ProgramOptions/MapOptions/MapSpec/
+   Map 全方法/ringbuf.Record/Reader/perf.Reader/bpf2go 全部 flag）均
+   逐一 grep 本地模块缓存 v0.22.0 源码核实，未凭记忆书写；
+2. 写作中由此发现并修复了一个实际 bug：Makefile 的 bpf2go 经 go run
+   直调时缺 GOPACKAGE 环境变量，必须显式 -go-package bpf（提交 b388c0c），
+   该教训同步写入了 doc/03 与 doc/08；
+3. 过程中发现并修正了文档自身的两处不实 API 描述（02 章 autoload、
+   05 章 XDPInfo 查询），以库源码为准。
+
+三、git 提交（本次任务，develop 分支）
+----------------
+b0729ee docs: 添加 cilium/ebpf 开发文档任务理解与确认日志
+b388c0c fix: bpf2go 经 go run 调用需显式指定 -go-package bpf(...)
+b408a7e docs: 添加文档索引与 01-eBPF 技术背景(...)
+f4b93dc docs: 添加 02-cilium/ebpf 核心对象(...)
+17e2aea docs: 添加 03-bpf2go 工作流(...)
+9fe3e6a docs: 添加 04-map 深入(...)
+39a3a61 docs: 添加 05-挂载与生命周期(...)
+267b64b docs: 添加 06-完整示例(...)
+092029f docs: 添加 07-ruport-go 实战解析(...)
+105fc72 docs: 添加 08-常见问题排查手册(...)
+
+四、未做事项
+----------------
+- 未合并回 main（按惯例由用户决定时机，或下次任务时一并处理）；
+- 文档基于 v0.22.0 API 与内核主线版本号编写，未在真实 Linux 环境
+  逐条执行示例（用户约定测试在 Linux 进行）；示例代码遵循本仓库
+  已验证的编译路径，但 06 章三个例子本身未实际编译运行。
