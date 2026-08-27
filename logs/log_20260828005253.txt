@@ -1,0 +1,77 @@
+tmp 外部文章整理入档完成日志
+====================================
+时间: 2026-08-28 00:52:53
+分支: develop
+前置: 任务理解见 log_20260828004744.txt，用户已确认
+      （三份新文档方案 + 中间产物 tmp/txt 删除均获确认）
+
+一、交付内容
+----------------
+整理自 ArthurChiao's Blog《BPF 进阶笔记》系列（2021-2022，基于内核
+5.8/5.10；原文 https://arthurchiao.art），以自己的行文重组进本仓库
+文档体系，各章开头注明出处与校订说明，未搬运原文：
+
+1. doc/11-progtype-signatures.md（286 行，整理自文章一）
+   - 快速索引表：类型 × hook 内核函数 × context × 返回值语义；
+   - 按家族展开：Socket（SOCKET_FILTER 截断语义/__sk_buff 镜像原理/
+     SOCK_OPS 两类 op 枚举/SK_SKB/SK_MSG/SK_REUSEPORT 下标返回）、
+     TC（SCHED_CLS/ACT）、XDP（xdp_md/xdp_action/native vs generic）、
+     cgroup（通用调用栈三步：sk_alloc 初始化/入向宏/出向宏，三种
+     类型的返回值语义）、tracing（kprobe 断点机制/pt_regs/tracefs
+     挂载、tracepoint format 文件读法、perf_event）、LWT；
+   - bpf_attach_type 速览 + ruport-go 视角。
+
+2. doc/12-map-internals.md（285 行，整理自文章二+三）
+   - 类型→ops→源码文件映射表（bpf_types.h）；
+   - struct bpf_map 通用元数据（refcnt 生命周期/frozen/BTF）；
+   - hash 家族：bpf_htab/bucket/htab_elem 结构图与内存布局、
+     创建流程（预分配/freelist/extra_elems/hashrnd）、查找
+     （O(1) 定桶 + hlist_nulls 无锁遍历、value 地址 8 对齐规则）、
+     更新（双重检查/bucket 锁/头插 RCU/E2BIG）、get_next_key
+     桶序迭代与并发跳跃、per-bucket LRU；
+   - array 家族：直接寻址/一次零初始化/不可删语义/8 对齐/
+     FD 数组变体/MAPABLE；
+   - 其他家族速览（queue/stack/cgroup storage 共享语义/sk_storage/
+     XDP 系 map/lpm_trie）；
+   - map 声明三代方式与 pinning 常量；ruport-go 视角
+     （message_map/router_map 行为对应）。
+
+3. doc/13-printk-and-trampoline.md（157 行，整理自文章四）
+   - trace 输出逐字段解释（含 0x00000001 fake ip 的由来）、
+     trace_options、trace 被打开时丢日志的坑；
+   - bpf_printk 宏与 5.2 .rodata 分水岭（含 "map .rodata ...
+     requires >= v5.2" 报错的解释）；
+   - bpf_trace_printk：BPF_CALL_5 → helper 5 参上限 → 3 参限制的
+     推导链、5.10 格式符支持表、5.9 换行/5.13 增强/5.16 vprintk；
+   - fentry/fexit trace 另一个 BPF 程序（5.5+，调试 ruport TC/XDP
+     的利器）；BPF trampoline 双向原理（BPF_CALL_x 静态版/
+     CAST_TO_U64 垫片/动态版 btf_distill_func_proto 与 eth_type_trans
+     例子）；fentry vs kprobe 四维对比。
+
+4. 同步更新：doc/README.md 目录加 11-13 行与"深入内核侧原理"阅读
+   路径、外部文章来源说明；09 章程序类型表、10 章 printk 规则处
+   加指向新章的交叉引用。
+
+二、版权处理
+----------------
+- 未整篇搬运原文；知识点以本仓库行文重组，出处明确标注；
+- 内核源码片段（GPL）保留少量关键代码并注明源码文件路径与内核版本；
+- 原文与我们核对事实冲突处（ringbuf 5.7+ vs 主线 5.8；全局变量
+  5.2+ 保守口径 vs 5.1+）在文中加注说明，以 09 章校订为准。
+
+三、中间产物清理（经用户确认）
+----------------
+- 已删除 tmp/txt/（本人生成的纯文本提取件，未跟踪）；
+- tmp/ 下用户原始 4 个 HTML 文件未做任何改动（仍为未跟踪状态，
+  是否纳入版本库由用户自行决定）。
+
+四、git 提交（本次任务）
+----------------
+c1d3580 docs: 添加 tmp 外部文章整理入档任务理解与确认日志
+f223e5f docs: 添加 11-程序类型参考手册(...)
+194a44f docs: 添加 12-map内核实现(...)
+1bd6f0a docs: 添加 13-printk内幕与trampoline(...)
+a0f21a5 docs: 索引与09/10章补充11-13章交叉引用
+(+ 本完成日志提交)
+
+五、doc/ 目录现状：14 份 markdown（README + 01~13），约 4200 行。
