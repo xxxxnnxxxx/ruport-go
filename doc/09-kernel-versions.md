@@ -58,6 +58,10 @@ Ubuntu 24.04（6.8）。
 
 ## 2. 程序类型（`bpf_prog_type`）全表
 
+> 本表给版本与挂载方式；每种类型的 **hook 内核函数位置、context
+> 签名、返回值语义**详见 [11-progtype-signatures.md](11-progtype-signatures.md)。
+> 同理，map 类型的内核实现拆解见 [12-map-internals.md](12-map-internals.md)。
+
 | 程序类型 | 版本 | 挂载方式 | 一句话用途 |
 |---|---|---|---|
 | `SOCKET_FILTER` | 3.19 | `SO_ATTACH_BPF` | socket 收包过滤（tcpdump 同源） |

@@ -132,7 +132,8 @@ bpf_printk("xdp: pkt len %d sport %d", len, sport);   // 宏，≤3 个参数自
 bpf_printk("comm %s", comm);                          // %s 用 char 数组/内核指针
 ```
 
-规则与限制：
+规则与限制（**限制的内核根源**——栈、helper 5 参上限、.rodata——
+见 [13-printk-and-trampoline.md](13-printk-and-trampoline.md)）：
 
 - 底层 helper `bpf_trace_printk`：**最多 3 个**可变参数；`%s` 需要内核
   空间可读指针（用户态指针要先 `bpf_probe_read_user_str`）；不支持

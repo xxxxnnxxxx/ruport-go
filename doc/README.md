@@ -19,6 +19,12 @@
 | [08-troubleshooting.md](08-troubleshooting.md) | 常见问题：verifier 报错样例与修复、权限/memlock、字节序与对齐 bug 症状、bpftool/trace_pipe 调试 | 卡住时查这里 |
 | [09-kernel-versions.md](09-kernel-versions.md) | 内核版本-特性完全对照：程序类型全表、map 类型全表、常用 helper 分组表、挂载/link、syscall 子命令、能力探测 API、目标机自查手册 | 选型/兼容性判断 |
 | [10-debugging.md](10-debugging.md) | 调试信息查看完全指南：按生命周期分阶段（编译/加载/挂载/运行/统计），bpftool 逐子命令手册，bpf_printk/trace_pipe/trace_marker，四条排障动线 | 出问题必读 |
+| [11-progtype-signatures.md](11-progtype-signatures.md) | 程序类型参考手册：每种类型的 hook 内核函数位置、context 签名、返回值语义、挂载方式（整理自 ArthurChiao 进阶笔记一） | 查"这个类型怎么用" |
+| [12-map-internals.md](12-map-internals.md) | map 内核实现：hashtab 数据结构与增删查改源码流程、array 家族、map_ops 映射表、cgroup storage、pinning（整理自进阶笔记二/三） | 想懂 map 行为边界 |
+| [13-printk-and-trampoline.md](13-printk-and-trampoline.md) | printk 内幕（5 参限制根源、.rodata 原理、trace 输出格式逐字段）与 BPF trampoline、fentry/fexit trace 另一个 BPF 程序（整理自进阶笔记四） | 调试进阶 |
+
+> 11–13 章整理自外部文章（ArthurChiao's Blog《BPF 进阶笔记》系列，
+> 原文见 https://arthurchiao.art），各章开头有出处与校订说明。
 
 ## 推荐阅读路径
 
@@ -27,6 +33,7 @@
 - **接手维护 ruport-go**：07 → 08 → 需要哪块补哪块。
 - **程序加载被拒/行为诡异**：直接查 08，需要系统方法再看 10。
 - **不确定目标内核支持某特性**：查 09（§9 有自查命令）。
+- **想深入内核侧原理**：11（类型与钩子）→ 12（map 实现）→ 13（printk/trampoline）。
 
 ## 约定
 
