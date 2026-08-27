@@ -1,0 +1,72 @@
+tmp 外部文章整理入档任务理解与确认日志
+====================================
+时间: 2026-08-28 00:47:44
+分支: develop（工作区干净，tmp/ 为未跟踪的用户文件）
+状态: 待用户确认（未开始编写）
+
+一、用户请求复述
+----------------
+用户说明：tmp/ 目录下的 4 个 HTML 文件是别人写的文章，用户认为质量
+较好；要求"整理这些文章，然后也添加到文档中"（doc/ 文档体系）。
+
+二、材料盘点（已逐篇通读并提取纯文本到 tmp/txt/ 便于阅读）
+----------------
+文章来源：ArthurChiao's Blog《BPF 进阶笔记》系列（2021 发表，
+2022 更新，内容基于内核 5.8/5.10）：
+
+1. （一）BPF 程序类型详解：约 30 种程序类型的使用场景、hook 位置
+   （精确到内核函数，如 sock_queue_rcv_skb/sch_handle_ingress）、
+   context 签名（struct __sk_buff/xdp_md/bpf_sock_ops/pt_regs 等）、
+   返回值语义、挂载方式、内核调用栈片段、bpf_attach_type 完整列表；
+2. （二）BPF Map 类型详解：各 map 类型的使用场景与内核自带示例
+   （sockex1/2/3、xdp_router_ipv4 等）、hash/array 家族特性对比、
+   map 声明方式与 pinning（PIN_GLOBAL_NS）；
+3. （三）BPF Map 内核实现：struct bpf_map/bpf_htab/bucket/htab_elem
+   结构体、htab_map_alloc/lookup/update/get_next_key 源码级调用栈、
+   arraymap 实现、各类型 xx_map_ops 与源码文件映射、cgroup storage；
+4. （四）调试 BPF 程序：bpf_printk（5.2+ 因 .rodata 全局变量）与
+   bpf_trace_printk 的限制根源（helper 5 参上限）、trace 输出格式
+   字段详解、5.9 自动换行等版本差异、用 fentry/fexit trace 另一个
+   BPF 程序（trampoline，5.5+）、BPF trampoline 双向原理、
+   fentry 相比 kprobe 的三大优势。
+
+三、整理方案（拟）
+----------------
+1. 版权与整理方式：不整篇搬运原文；以自己的行文将四篇的知识点
+   重组进本仓库文档体系，每章开头注明"整理自 ArthurChiao's Blog
+   《BPF 进阶笔记（x）》，原文见 https://arthurchiao.art（基于内核
+   5.8/5.10）"。内核源码片段（GPL）保留少量关键代码并注明内核
+   版本与源码文件路径。发现与本项目文档冲突处（如原文称 ringbuf
+   5.7+，实际主线 5.8）以我们已核对的 09 章为准并加注。
+2. 新增三份文档（编号续接现有体系）：
+   doc/11-progtype-signatures.md
+     —— 程序类型参考手册：按 Socket/TC/XDP/cgroup/tracing/LWT
+        分组，每类给出 hook 内核函数位置、context 签名、返回值
+        语义、挂载方式（整理自文章一）；
+   doc/12-map-internals.md
+     —— map 使用场景补遗 + 内核实现：hash 家族数据结构与增删查
+        改源码流程（bucket/htab_elem/预分配/RCU）、array 家族、
+        map_ops 与源码文件映射、cgroup storage、pinning 机制
+        （整理自文章二+三）；
+   doc/13-printk-and-trampoline.md
+     —— printk 内幕与 BPF trampoline：bpf_printk 的 .rodata 原理
+        与报错特征、bpf_trace_printk 限制根源与格式支持表、trace
+        输出字段逐位解释、fentry/fexit trace BPF 程序、trampoline
+        双向原理、fentry vs kprobe 对比（整理自文章四）。
+3. 同步更新 doc/README.md 目录与阅读路径；在 09/10 章相关小节加
+   指向新章的交叉引用（各加一句，不重排正文）。
+4. 与本仓库工程视角打通：每章末尾附"ruport-go 视角"小节，把文章
+   知识点对应到本仓库用到的 XDP/SCHED_CLS/hash map/printk。
+
+四、不改动的部分
+----------------
+- 不修改 01~08 章正文（只在 09/10 加交叉引用）；
+- 不修改 tmp/ 下任何用户原始 HTML 文件。
+
+五、待确认问题
+----------------
+1. 上述"整理为三份新文档 + 注明出处"的方案是否可以？
+   （备选：合并为一份大文档，或直接扩充进 04/09/10 既有章节）
+2. 我为通读文章而生成的中间产物 tmp/txt/*.txt（纯文本提取件，
+   未跟踪、非用户原始文件）——整理完成后是否删除？
+   （按删除确认规则，未经您同意我不会动它们）
