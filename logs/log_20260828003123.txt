@@ -1,0 +1,81 @@
+文档补充完善任务理解与确认日志
+====================================
+时间: 2026-08-28 00:31:23
+分支: develop（工作区干净）
+状态: 待用户确认（未开始编写）
+
+一、用户请求复述
+----------------
+用户反馈：现有 doc/ 文档"有的地方还是不全"，并举了两个例子：
+1. eBPF 怎么查看调试信息——目前的调试内容只在 08 章 §5 有一个
+   简短"工具箱"，远不够全面；
+2. 什么内核版本支持什么接口——目前只有 01 章 §9 一张小表和各章
+   零散提及，没有系统的"内核版本-特性支持矩阵"。
+要求：这些方面要全面。
+
+二、我的理解与执行方案（拟）
+----------------
+不重写现有 8 章，新增两份专门文档 + 更新索引：
+
+1. 新增 doc/09-kernel-versions.md（内核版本-特性支持完全对照）
+   内容大纲：
+   - 程序类型完整表：bpf_prog_type 全系列（从 SOCKET_FILTER 到
+     NETFILTER/STRUCT_OPS），每项给主线合入版本 + 挂载方式 + 典型用途
+   - map 类型完整表：全系列（HASH...BLOOM_FILTER/UserType?）含版本、
+     关键约束（如 RINGBUF 必须 2 的幂、PROG_ARRAY 值语义）
+   - 常用 helper 函数表：按功能分组（map 操作/包处理/tracing/时间与
+     随机/cgroup...），标注版本与适用程序类型白名单要点
+   - 挂载与 link 机制表：XDP 三模式、TC/tcx/netkit、tracepoint/
+     kprobe(+multi)/uprobe(+multi)/fentry/fexit/freplace/LSM/
+     cgroup 系列/iter/netfilter，各自版本
+   - bpf() 系统调用子命令演进（BPF_LINK_CREATE/BPF_*_BATCH/
+     BPF_BTF_LOAD...）
+   - BTF/CO-RE、memlock/memcg、capability 细分等"环境类"版本节点
+   - cilium/ebpf 能力探测 API 与上述条目的对应（HaveProgramType/
+     HaveMapType/HaveBatchAPI/link.HaveTCX...）
+   - "如何自查当前内核支持什么"操作手册：bpftool feature probe
+     各用法、/proc/config.gz、/boot/config、BTF 是否存在
+     (/sys/kernel/btf/vmlinux)、uname、发行版 backport 注意事项
+
+2. 新增 doc/10-debugging.md（eBPF 调试信息查看完全指南）
+   按"程序生命周期阶段"组织，内容大纲：
+   - 编译期：clang -E/-S 看预处理与汇编、llvm-objdump 读 .o、
+     BTF 段检查（bpftool btf dump file xxx.o）
+   - 加载期：verifier 日志完全指南（cilium/ebpf 的 LogLevel 位图
+     与两段式加载、libbpf 打印级别对照、逐行读法、常见拒绝样式
+     与 08 章联动）
+   - 运行期内核侧输出：bpf_printk/bpf_trace_printk 完全用法
+     （格式化限制、并发交织、性能代价、何时换 ringbuf）、
+     trace_pipe/trace 文件与 trace_marker、bpf_snprintf/
+     bpf_seq_print（iter）
+   - 运行期用户态观察：bpftool 完全用法逐子命令展开
+     （prog show/dump xlated|jited/pin/run、map show/dump/update/
+     delete/pin、link show/pin/detach、net show/detach、btf dump、
+     feature probe、iter pin）、json 输出 + jq 组合
+   - 状态与统计接口：/proc/sys/kernel/bpf_stats_enabled、
+     unprivileged_bpf_disabled、/sys/fs/bpf、/sys/kernel/debug/
+     tracing 目录导览、bpf_jit_enable
+   - 性能与行为分析：run_time_ns/run_cnt、perf 采样 BPF 程序、
+     火焰图思路（概述）、tcpdump/包层面观察改写效果
+   - Go 侧调试：cilium/ebpf 错误链读取、CollectionOptions 日志、
+     p.Run 单测、LookupBytes 原始字节打印
+   - 组合排障流程："加载失败/挂了没生效/数据错了/性能差"四条
+     标准动线，与 08 章症状表互相引用
+
+3. 同步修改：
+   - doc/README.md：目录加 09/10 两行，阅读路径补充
+   - 08 章 §5 工具箱开头加一句"完整调试指南见 10 章"，避免内容
+     重复维护（保留 08 章速查性质）
+   - 01 章 §9 速查表加指向 09 章的链接
+
+三、不改动的部分
+----------------
+- 不改 01~07 章正文（只在 01/08 加少量交叉引用链接）；
+- 不改任何代码与 Makefile。
+
+四、待确认问题
+----------------
+1. 以上两个新章节 + 索引/交叉引用的方案是否可以？
+2. 09 章的"完整表"采用"主线版本号 + 常用条目全列、次要条目归组"
+   的粒度（bpf_prog_type 约 40 种全列，helper 按 200+ 个中挑常用
+   ~60 个分组建表，其余说明查阅途径）——可接受吗？还是需要更细？
