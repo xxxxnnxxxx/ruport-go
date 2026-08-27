@@ -1,0 +1,68 @@
+文档补充完善完成日志
+====================================
+时间: 2026-08-28 00:38:13
+分支: develop
+前置: 任务理解见 log_20260828003123.txt，用户已确认
+      （新增两章 + 更新索引与交叉引用的方案）
+
+一、交付内容
+----------------
+1. 新增 doc/09-kernel-versions.md（322 行）：
+   - 基础里程碑时间轴（3.18→6.8，含对开发者的意义）；
+   - bpf_prog_type 全表（约 30 种：版本/挂载方式/用途）；
+   - map 类型全表（约 25 种：版本/关键约束）；
+   - 常用 helper 分组表（约 60 个，按 map/包处理/tracing/打印/事件/
+     时间随机分组，附 bpf_helper_defs.h 权威查阅途径）；
+   - 挂载与 link 机制表（clsact 到 tcx/netkit/kprobe-multi）；
+   - bpf() 子命令演进粗表；
+   - verifier 能力版本表（指令上限/日志级别/有界循环）；
+   - cilium/ebpf features 探测 API 与特性对应（已逐一核对 v0.22.0
+     features 包导出函数）；
+   - §9 自查手册：bpftool feature probe 各用法、/proc/config.gz、
+     BTF 存在性、sysctl、发行版 backport 注意事项。
+   可信度策略：主流稳定条目直接给版本；长尾条目标 ~ 并明确说明
+   以 feature probe 实测为准（避免不确定信息冒充确定值）。
+
+2. 新增 doc/10-debugging.md（334 行）：
+   - §0 调试信息全景图（阶段×信息×工具矩阵）；
+   - §1 编译期：clang -E/-S、llvm-readelf/objdump、bpftool btf dump；
+   - §2 加载期：verifier 日志完全指南（cilium 两段式加载机制、
+     LogLevel 三常量与版本、Program.VerifierLog 字段（已核对 v0.22
+     源码 prog.go:239）、逐行读法、寄存器状态行解读、processed insns
+     统计解读、strace -e bpf）；
+   - §3 挂载期：bpftool net/link/prog + tc/ip 命令组合；
+   - §4 运行期内核侧：bpf_printk 完全规则（3 参数限制、%s 约束、
+     bpf_snprintf/bpf_trace_vprintk 逃生通道、性能代价）、trace_pipe/
+     trace/trace_marker（用户态打点对时间线）、tracing_on 开关、
+     ringbuf 作为生产级调试通道、bpf_iter dump；
+   - §5 用户态：bpftool prog/map/link/net/btf/perf/iter 逐子命令手册
+     （含 -j JSON+jq 组合）、Go 侧 LookupBytes/Run/VerifierLog 调试、
+     tcpdump 抓包层与 XDP/tc 改写的先后关系说明；
+   - §6 统计：bpf_stats_enabled + run_time_ns/run_cnt 判读、深度剖析
+     思路；
+   - §7 系统层：unprivileged_bpf_disabled/perf_event_paranoid/
+     bpf_jit_enable/LSM；
+   - §8 四条标准排障动线（加载失败/挂了没生效/数据错乱/性能差）。
+
+3. 更新：README.md 目录加 09/10 行、阅读路径补两条；01 章 §9 速查表
+   加指向 09 章链接；08 章 §5 工具箱加指向 10 章说明（保留速查职责）。
+
+二、质量保障
+----------------
+- 写入前逐一核对了 v0.22.0 源码：Program.VerifierLog 字段
+  （prog.go:239）、LogLevel 三常量及其 5.2 版本注释（types.go）、
+  features 包全部导出探测函数（HaveProgramType/HaveMapType/
+  HaveProgramHelper/HaveBatchAPI/HaveMapFlag/HaveBoundedLoops/
+  HaveLargeInstructions/HaveV2-V4ISA/HaveBPFLinkKprobeMulti/
+  UprobeMulti/KprobeSession）；
+- 内核版本表主流条目交叉印证，长尾条目标 ~ 并指明实测方法，
+  未将不确定值伪装成确定值。
+
+三、git 提交（本次任务）
+----------------
+fc2ac70 docs: 添加文档补充完善任务理解与确认日志
+8d078b1 docs: 添加 09-内核版本特性完全对照(...)
+b6d109b docs: 添加 10-调试信息查看完全指南(...)
+a7d02e1 docs: 索引与01/08章补充09/10章交叉引用
+
+四、doc/ 目录现状：11 份 markdown，共约 3500 行。
