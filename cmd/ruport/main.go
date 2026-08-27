@@ -22,6 +22,7 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	"ruport-go/internal/bpf"
 	"ruport-go/internal/control"
@@ -96,12 +97,15 @@ type tcAttach struct {
 // 等价于原 loadtcfilter() 中 bpf_tc_hook_create + bpf_tc_attach
 // （priority=1 handle=1）。
 func attachTcFilters(ifindex int, ingress, egress *ebpf.Program) (*tcAttach, error) {
-	nlLink, err := netlink.LinkByIndex(ifindex)
-	if err != nil {
-		return nil, fmt.Errorf("resolve link by index: %w", err)
+	// 创建 clsact qdisc（handle ffff:0000，parent ffff:fff1），
+	// 对应原 bpf_tc_hook_create(BPF_TC_EGRESS/INGRESS)
+	clsact := &netlink.Clsact{
+		QdiscAttrs: netlink.QdiscAttrs{
+			LinkIndex: ifindex,
+			Handle:    netlink.MakeHandle(0xffff, 0),
+			Parent:    netlink.HANDLE_CLSACT,
+		},
 	}
-
-	clsact := netlink.NewClsact(nlLink)
 	if err := netlink.QdiscAdd(clsact); err != nil && !errors.Is(err, syscall.EEXIST) {
 		return nil, fmt.Errorf("create clsact qdisc: %w", err)
 	}
@@ -111,9 +115,9 @@ func attachTcFilters(ifindex int, ingress, egress *ebpf.Program) (*tcAttach, err
 			FilterAttrs: netlink.FilterAttrs{
 				LinkIndex: ifindex,
 				Parent:    parent,
-				Handle:    1,
+				Handle:    netlink.MakeHandle(0, 1),
 				Priority:  1,
-				Protocol:  0,
+				Protocol:  unix.ETH_P_ALL,
 			},
 			Fd:           prog.FD(),
 			DirectAction: false,
