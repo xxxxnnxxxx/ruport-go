@@ -319,6 +319,10 @@ CO-RE（Compile Once, Run Everywhere）三件套：
 ruport-go 只依赖 XDP + 经典 TC + hash map，按 4.8+ 设计；实际建议
 Ubuntu 24.04（6.8）这类现代环境，与原项目测试环境一致。
 
+> 本表是速查。**完整**的"内核版本-特性"矩阵（程序类型全表、map 类型
+> 全表、常用 helper、挂载/link、syscall 子命令、以及目标机自查命令）
+> 见 [09-kernel-versions.md](09-kernel-versions.md)。
+
 ## 10. 最小可对照示例
 
 内核侧（`minimal.bpf.c`）：

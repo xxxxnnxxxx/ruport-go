@@ -159,6 +159,10 @@ bpftool map show | awk '$0 ~ /message_map|router_map/ {print $0}'
 
 ## 5. 工具箱
 
+> 本章为速查。**完整**的调试方法（按生命周期分阶段、bpftool 逐子命令
+> 手册、bpf_printk/trace_pipe/trace_marker 详解、性能统计、四条排障
+> 动线）见 [10-debugging.md](10-debugging.md)。
+
 ```bash
 # 万能三连：现在内核里有什么？
 sudo bpftool prog show

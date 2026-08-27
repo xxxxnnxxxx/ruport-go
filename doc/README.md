@@ -16,14 +16,17 @@
 | [05-links.md](05-links.md) | 挂载与生命周期：XDP 三种模式、TC clsact（netlink）与 tcx、tracepoint/kprobe/fentry、Link 语义与 pin | 把程序挂进内核必读 |
 | [06-examples.md](06-examples.md) | 三个从零可运行的完整例子：XDP 计数器、TC 端口改写、ringbuf 事件（C + Go + 编译运行步骤） | 照着敲一遍上手 |
 | [07-ruport-go-notes.md](07-ruport-go-notes.md) | 本仓库实战解析：ruport-go 每个模块逐段讲解，与原 C/libbpf 版本的对应关系 | 维护本仓库必读 |
-| [08-troubleshooting.md](08-troubleshooting.md) | 常见问题：verifier 拒绝样例与修复、权限/memlock、字节序与对齐 bug 症状、bpftool/trace_pipe 调试 | 卡住时查这里 |
+| [08-troubleshooting.md](08-troubleshooting.md) | 常见问题：verifier 报错样例与修复、权限/memlock、字节序与对齐 bug 症状、bpftool/trace_pipe 调试 | 卡住时查这里 |
+| [09-kernel-versions.md](09-kernel-versions.md) | 内核版本-特性完全对照：程序类型全表、map 类型全表、常用 helper 分组表、挂载/link、syscall 子命令、能力探测 API、目标机自查手册 | 选型/兼容性判断 |
+| [10-debugging.md](10-debugging.md) | 调试信息查看完全指南：按生命周期分阶段（编译/加载/挂载/运行/统计），bpftool 逐子命令手册，bpf_printk/trace_pipe/trace_marker，四条排障动线 | 出问题必读 |
 
 ## 推荐阅读路径
 
 - **第一次接触 eBPF**：01 → 06（跟着敲）→ 07。
 - **只用 Go、C 侧已有人维护**：02 → 03 → 04 → 05。
 - **接手维护 ruport-go**：07 → 08 → 需要哪块补哪块。
-- **程序加载被拒/行为诡异**：直接查 08。
+- **程序加载被拒/行为诡异**：直接查 08，需要系统方法再看 10。
+- **不确定目标内核支持某特性**：查 09（§9 有自查命令）。
 
 ## 约定
 
