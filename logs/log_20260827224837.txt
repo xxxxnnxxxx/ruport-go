@@ -1,0 +1,61 @@
+cilium/ebpf 开发文档任务理解与确认日志
+====================================
+时间: 2026-08-27 22:48:37
+分支: develop（与 main 同步）
+状态: 待用户确认（未开始编写文档）
+
+一、用户请求复述
+----------------
+用户要求：
+1. 在 ruport-go 仓库下创建 doc 目录；
+2. 生成一份详细的 cilium/ebpf 开发文档；
+3. 要求：一定要详细——包含知识点、技术背景、示例等，不能只是总结大概。
+
+二、我的理解与执行方案（拟）
+----------------
+性质：纯文档新增，不改动任何现有代码、Makefile、流程或目录布局；
+     在 develop 分支进行，完成后按规则分步提交（如需同步 main 由用户决定）。
+
+语言：中文撰写，代码、命令、API 名保持英文原样。
+
+详细程度：不是概览式总结，而是可照着上手开发的参考文档——每个主题
+包含：技术背景（内核机制原理）、库 API 讲解、完整可运行示例代码
+（C 侧 + Go 侧）、常见报错与排查方法。
+
+拟拆分为多份 markdown（详细内容单文件过长，便于查阅维护）：
+
+doc/
+  README.md              文档索引与阅读路径
+  01-ebpf-overview.md    eBPF 技术背景：内核架构、虚拟机/验证器/JIT、
+                         程序类型、map 类型、BTF/CO-RE 原理、
+                         libbpf 与 cilium/ebpf 的关系与差异
+  02-cilium-ebpf-core.md 库核心对象：CollectionSpec/Collection、
+                         Program/Map/Link、能力探测、加载流程 internals
+  03-bpf2go.md           bpf2go 工作流：Makefile/go:generate、-type 生成
+                         结构体（含 packed/字节序/对齐规则）、构建标签、
+                         嵌入 ELF、生成 API 的真实形状
+  04-maps.md             Map 深入：CRUD/Iterate/LookupAndDelete、
+                         per-CPU、ringbuf/perf 事件读取、内核与用户态
+                         共享结构体的布局/字节序/对齐坑
+  05-links.md            挂载与生命周期：XDP 三种模式、TC clsact/tcx、
+                         tracepoint/kprobe/raw_tracepoint、Link 语义、
+                         pin、卸载清理
+  06-examples.md         从零完整示例（可运行）：XDP 包计数器、
+                         TC 端口改写+校验和更新、ringbuf 内核->用户事件
+                         三个例子，含 C 代码、Go 加载端、编译运行步骤
+  07-ruport-go-notes.md  本仓库实战解析：ruport-go 各模块逐段讲解
+                         （bpf/*.bpf.c、cmd/ruport、internal/control），
+                         指出与原 C/libbpf 版本的对应关系
+  08-troubleshooting.md  常见问题：verifier 报错样例与修复、memlock/
+                         权限、字节序、bpftool/trace_pipe 调试手段
+
+三、不改动的部分
+----------------
+- 不修改 bpf/、cmd/、internal/、Makefile、README.md 等现有文件；
+- 不联网复制整篇第三方教程，内容基于库文档知识与本仓库实际代码编写。
+
+四、待确认问题
+----------------
+1. 以上文档结构（拆分多文件 + 索引）是否符合预期？还是希望合并为
+   单个大文件？
+2. 章节范围是否有需要增删的主题？
