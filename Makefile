@@ -23,13 +23,15 @@ tidy:
 	$(GO) mod tidy
 
 # 用 bpf2go 编译 eBPF C 源码并生成 Go 绑定（等价原项目的 skeleton 生成步骤）
+# 注：通过 go run 直接调用时无 go generate 提供的 GOPACKAGE 环境变量，
+# 必须显式指定 -go-package（即 internal/bpf 的包名 bpf）
 generate: tidy
 	cd internal/bpf && $(GO) run github.com/cilium/ebpf/cmd/bpf2go \
 		-cc $(CLANG) -cflags "$(BPF_CFLAGS) $(CLANG_BPF_SYS_INCLUDES)" \
-		-type Message Xdp ../../bpf/ruport_xdp.bpf.c
+		-go-package bpf -type Message Xdp ../../bpf/ruport_xdp.bpf.c
 	cd internal/bpf && $(GO) run github.com/cilium/ebpf/cmd/bpf2go \
 		-cc $(CLANG) -cflags "$(BPF_CFLAGS) $(CLANG_BPF_SYS_INCLUDES)" \
-		-type Router Tc ../../bpf/ruport_tc.bpf.c
+		-go-package bpf -type Router Tc ../../bpf/ruport_tc.bpf.c
 
 build: generate
 	$(GO) build -o ruport ./cmd/ruport
