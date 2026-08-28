@@ -30,9 +30,10 @@ verifier 日志，会重写全局变量、pin 对象、做能力探测。
 - **无 `Spec` = 实例**：已经 `BPF_PROG_LOAD`/`BPF_MAP_CREATE` 过，持有
   内核 FD，占内核内存，需要 `Close()`。
 
-bpf2go 生成的 `loadXdp()` 返回 `*CollectionSpec`（蓝图），
-`loadXdpObjects(&objs, nil)`（实例，填进 `XdpObjects`）——本仓库
-`internal/bpf/loader.go` 封装的正是后者。
+bpf2go 生成的 `LoadXdp()` 返回 `*CollectionSpec`（蓝图），
+`LoadXdpObjects(&objs, nil)`（实例，填进 `XdpObjects`）——本仓库
+`cmd/ruport/main.go` 直接调用的正是后者（大写 ident 下生成函数即为
+导出，详见 03 章 §4 的命名规则）。
 
 ## 2. CollectionSpec：解析 ELF
 
@@ -154,15 +155,13 @@ defer objs.Close()
 - 生成的 `XdpObjects` 自带 `Close()`，依次关闭 programs 和 maps；
 - 同一 Spec 可以 `LoadAndAssign` 多次，得到互不相干的实例集。
 
-本仓库 `internal/bpf/loader.go`：
+本仓库 `cmd/ruport/main.go` 的用法（大写 ident 下 `LoadXdpObjects`
+本身就是导出的填充式 API，直接调用）：
 
 ```go
-func LoadXdpObjects(opts *ebpf.CollectionOptions) (*XdpObjects, error) {
-    var objs XdpObjects
-    if err := loadXdpObjects(&objs, opts); err != nil {  // bpf2go 生成
-        return nil, err
-    }
-    return &objs, nil
+var objs bpf.XdpObjects
+if err := bpf.LoadXdpObjects(&objs, nil); err != nil {   // bpf2go 生成
+    log.Fatal(err)
 }
 ```
 

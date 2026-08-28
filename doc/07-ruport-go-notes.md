@@ -303,13 +303,13 @@ func toHostPort(port uint16) uint16 {
 getopt 异常路径本身是崩溃）；`-i` 与 `-1..-4` 同给时 `-i` 优先（python
 按命令行顺序后者生效——极边缘场景）。
 
-## 7. internal/bpf/ —— 生成与封装
+## 7. internal/bpf/ —— 生成绑定
 
 - `doc.go`：占位说明（保证 `make generate` 之前包不空、tidy 可跑）；
-- `loader.go`：`LoadXdpObjects/LoadTcObjects`——纯粹是把 bpf2go 生成的
-  **未导出** `loadXdpObjects(obj,opts)` 包装成导出 API（小写 ident 的
-  固定套路，见 doc/03 §4）；
-- `Xdp_bpfel.go` 等：`make generate` 产物（gitignore，不入库）。
+- `Xdp_bpfel.go`/`Tc_bpfel.go` 等：`make generate` 产物（gitignore，
+  不入库）。Makefile 用大写 ident（Xdp/Tc），bpf2go 生成的加载函数
+  `LoadXdpObjects/LoadTcObjects`（填充式 `obj any, opts`）本身就是
+  导出的，main.go 直接调用，无需手写封装（命名规则见 doc/03 §4）。
 
 ## 8. C 版 ↔ Go 版对照速查
 

@@ -128,11 +128,11 @@ const (
     XdpMapMessageMap   = "message_map"
 )
 
-// 返回嵌入 ELF 解析出的 Spec
-func loadXdp() (*ebpf.CollectionSpec, error) { ... }
+// 返回嵌入 ELF 解析出的 Spec（大写 ident 下为导出的 LoadXdp）
+func LoadXdp() (*ebpf.CollectionSpec, error) { ... }
 
 // 填充式加载：等价 spec.LoadAndAssign(obj, opts)
-func loadXdpObjects(obj any, opts *ebpf.CollectionOptions) error { ... }
+func LoadXdpObjects(obj any, opts *ebpf.CollectionOptions) error { ... }
 
 type XdpPrograms struct {
     XdpParse *ebpf.Program `ebpf:"xdp_parse"`
@@ -150,19 +150,28 @@ func (o *XdpObjects) Close() error   // 关闭全部 programs + maps
 type XdpSpecs struct { XdpProgramSpecs; XdpMapSpecs }
 ```
 
-**命名规则**：ident 首字母大写 → 所有导出符号（`XdpObjects`）；
-小写则全部未导出。`loadXdpObjects` 本身始终小写——所以跨包使用必须像
-本仓库 `internal/bpf/loader.go` 那样手写一层导出封装：
+**命名规则**（v0.22.0 `gen/output.go` 的 `maybeExport` 逻辑实测）：
+**加载函数名 = `load` + toUpperFirst(ident) + `Objects`，当 ident 是
+导出标识符（首字母大写）时整体再首字母大写**：
+
+| ident | 类型 | Spec 加载器 | 对象加载器（填充式） |
+|---|---|---|---|
+| `Xdp`（本仓库） | `XdpObjects`（导出） | `LoadXdp()` | `LoadXdpObjects(obj any, opts) error`（导出，直接调用） |
+| `xdp`（小写） | `xdpObjects`（未导出） | `loadXdp()` | `loadXdpObjects(obj any, opts) error`（未导出，跨包需手写封装） |
+
+本仓库用大写 ident，因此 `cmd/ruport/main.go` 可以直接：
 
 ```go
-func LoadXdpObjects(opts *ebpf.CollectionOptions) (*XdpObjects, error) {
-    var objs XdpObjects
-    if err := loadXdpObjects(&objs, opts); err != nil {
-        return nil, err
-    }
-    return &objs, nil
+var objs bpf.XdpObjects
+if err := bpf.LoadXdpObjects(&objs, nil); err != nil {
+    log.Fatal(err)
 }
 ```
+
+> 踩坑记录：早期版本曾依据"小写 ident 的测试样例"推断加载函数始终
+> 未导出而手写了封装层，与大写 ident 下生成的导出函数重名冲突
+> （Linux 实机构建时报 redeclared）。教训：**以自己 ident 实际生成
+> 的文件为准**，不要拿别的 ident 的样例推断。
 
 **字段名规则**：C `xdp_parse` → Go `XdpParse`；`message_map` →
 `MessageMap`；结构体成员 `connport` → `Connport`。蛇形转驼峰，保大小写
@@ -246,7 +255,7 @@ bpf2go 依据 `.o` 里的 **BTF** 把 C 类型翻成 Go，规则要点：
 
 | libbpf（原 ruport） | bpf2go（ruport-go） |
 |---|---|
-| `ruport_xdp__open_and_load()` | `loadXdpObjects(&objs, nil)` |
+| `ruport_xdp__open_and_load()` | `LoadXdpObjects(&objs, nil)` |
 | `skel->progs.xdp_parse` / `bpf_program__fd()` | `objs.XdpParse` / `.FD()` |
 | `skel->maps.message_map` / `bpf_map__fd()` | `objs.MessageMap` |
 | `skel->rodata->xxx = y` | `spec.RewriteConstants` 后再加载 |
