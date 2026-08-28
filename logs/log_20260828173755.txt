@@ -1,0 +1,57 @@
+kprobe/fentry 专题强化完成日志
+====================================
+时间: 2026-08-28 17:37:55
+分支: develop
+前置: 方案确认见 log_20260828171523.txt，用户确认方案 A，
+      并补充要求"加上 kprobe 和 fentry 的对比"
+
+一、交付内容
+----------------
+新增 doc/14-kprobe-fentry.md（398 行）《动态探针完全指南》：
+  §1 家族全景图（kprobe 族断点路线 vs fentry 族 trampoline 路线，
+     含 uprobe/multi/fmod_ret/freplace 定位）；
+  §2 kprobe 机制走读：int3 断点替换→trap→pre-handler→单步原指令→
+     重插断点的完整时序；由此推出三项固有属性（双异常开销/
+     地址而非语义耦合/内联与 NOKPROBE 探测不到）；符号来源
+     /proc/kallsyms 与 Offset 探内联点技巧；
+  §3 kretprobe：返回地址偷换 + trampoline 机制、MaxActive 并发
+     实例池限制的根源与丢事件行为、"参数+返回值"需配对 map 的
+     经典模式；
+  §4 C 侧两套写法：裸 pt_regs（PT_REGS_PARMx/RC、probe_read_
+     kernel 必要性）与 BPF_KPROBE/BPF_KPROBE_SYSCALL 宏（展开
+     思路示意），uprobe/USDT 对照；
+  §5 fentry 族四形态：fentry（参数直读+指针直接解引用）、fexit
+     （参数+返回值同拿的双段调用原理）、fmod_ret（白名单改返回
+     值）、freplace（挂另一 BPF 程序/热替换），BPF_PROG 宏用法；
+  §6 【用户点名补充】kprobe 与 fentry 全面对比：14 维对比大表
+     （机制/开销/版本/参数获取/返回值/改返回值/耦合性/范围/生态
+     等）+ 五条选型口诀 + 一句话总结（瑞士军刀 vs 新内核正确答案）；
+  §7 主示例 vfs_read 耗时双版本对照：kprobe+kretprobe+配对map 版
+     （4.1+）与 fentry+fexit 版（5.5+）的完整 C 代码、Go 挂载
+     （link.Kprobe/Kretprobe/AttachTracing）、trace_pipe 输出样例、
+     对照结论表；
+  §8 Go API 全貌：Kprobe/Kretprobe/AttachTracing(TracingOptions
+     三字段)/KprobeMulti(Symbols)，KprobeOptions 四字段逐个讲
+     （Cookie/Offset/RetprobeMaxActive/TraceFSPrefix，源码注释口径）；
+  §9 报错速查五条（符号不存在/BTF 缺失/裸解引用被拒/MaxActive 丢
+     事件/uprobe strip）。
+
+同步修改：doc/05 §4 开头、doc/11 §5.1 末尾、doc/13 §4.3 加指向
+14 章的交叉引用；doc/README.md 目录加 14 行（"tracing 必读"）、
+进阶阅读路径补 14。
+
+二、质量保障
+----------------
+写入前核实了 v0.22.0 源码：TracingOptions{Program, AttachType,
+Cookie}、KprobeMultiOptions{Symbols/Addresses}、
+link.KprobeMulti(prog, opts) 函数名、KprobeOptions 全字段注释
+（此前已核）；未核实的内容（宏展开内部）以"简化示意"明确标注。
+
+三、git 提交
+----------------
+a707726 docs: 添加 kprobe/fentry 专题强化任务理解与确认日志
+51a1c8d docs: 添加 14-动态探针完全指南(...)
+f560d9a docs: 05/11/13章与索引补充14章交叉引用
+(+ 本完成日志提交)
+
+四、doc/ 目录现状：17 份 markdown（README + 00~14），约 5100 行。
