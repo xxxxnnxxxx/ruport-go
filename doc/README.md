@@ -9,7 +9,8 @@
 
 | 文档 | 主题 | 适合谁 |
 |---|---|---|
-| [01-ebpf-overview.md](01-ebpf-overview.md) | eBPF 技术背景：内核架构、虚拟机与指令集、验证器、JIT、程序类型、map 类型、BTF/CO-RE、libbpf 与 cilium/ebpf 的关系 | 零基础入门 / 需要补内核侧原理 |
+| [00-start-here.md](00-start-here.md) | 入门总览：eBPF 到底是什么（三个类比）、**能做什么**（四大应用领域全景×代表项目）、**系统的什么地方可以 hook**（收包/发包/系统调用三条主线全景地图）、不能做什么（能力边界）、eBPF vs 内核模块 vs iptables | **所有人从这里开始** |
+| [01-ebpf-overview.md](01-ebpf-overview.md) | eBPF 技术背景：内核架构、虚拟机与指令集（C↔BPF 汇编实例走读）、验证器（含状态推演走读）、helper 机制、程序类型、map 类型、组合能力、对象模型（FD/ID/pin）、BTF/CO-RE、libbpf 与 cilium/ebpf 的关系 | 零基础入门 / 需要补内核侧原理 |
 | [02-cilium-ebpf-core.md](02-cilium-ebpf-core.md) | 库核心对象：CollectionSpec/Collection、Program/Map、LoadAndAssign、能力探测、verifier 日志、全局变量重写、pin | 写 Go 加载端必读 |
 | [03-bpf2go.md](03-bpf2go.md) | bpf2go 工作流：全部命令行参数、Makefile/go:generate 集成、生成文件解剖、`-type` 结构体生成规则（packed/对齐/字节序） | 维护本仓库 Makefile 必读 |
 | [04-maps.md](04-maps.md) | Map 深入：全部常用 API、迭代与批量、per-CPU、ringbuf/perf 事件、共享结构体的布局/对齐/字节序陷阱 | 内核↔用户态交换数据必读 |
@@ -28,7 +29,14 @@
 
 ## 推荐阅读路径
 
-- **第一次接触 eBPF**：01 → 06（跟着敲）→ 07。
+**入门到精通主线**：
+`00 建立地图 → 01 啃原理 → 06 动手跑例子 → 07 读懂本仓库源码 →
+04/05 map 与挂载深入 → 02/03 Go 加载端与 bpf2go → 08/10 排障调试 →
+09 版本兼容 → 11/12/13 内核侧进阶 → 精通`
+
+按场景速达：
+
+- **第一次接触 eBPF**：00 → 01 → 06 → 07。
 - **只用 Go、C 侧已有人维护**：02 → 03 → 04 → 05。
 - **接手维护 ruport-go**：07 → 08 → 需要哪块补哪块。
 - **程序加载被拒/行为诡异**：直接查 08，需要系统方法再看 10。

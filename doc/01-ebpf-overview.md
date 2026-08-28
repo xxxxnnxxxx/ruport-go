@@ -4,6 +4,9 @@
 为什么老是拒绝我的程序、map 和程序类型分别是什么、CO-RE/vmlinux.h 解决
 什么问题、以及 cilium/ebpf 与 libbpf 的分工。本章是后面所有章节的地基。
 
+> 还没有整体概念（eBPF 能做什么、系统哪里能挂钩）的读者，先读
+> [00-start-here.md](00-start-here.md) 建立地图，再回来啃原理。
+
 ---
 
 ## 1. eBPF 是什么
@@ -79,6 +82,51 @@ eBPF 是寄存器机（cBPF 是栈机）：
   （调 helper）、`BPF_EXIT`（返回）。
 - 64 位运算显式后缀（`BPF_MOV` vs `BPF_MOV32` 等），C 里写 `x = y` 还是
   `x = (u32)y` 会生成不同指令——这是验证器报“类型不匹配”的常见来源。
+
+#### 3.1.1 实例走读：一小段 C 长什么样
+
+写一段最小的 XDP 程序（"IP 包直接丢弃，其余放行"）：
+
+```c
+SEC("xdp")
+int drop_ip(struct xdp_md *ctx)
+{
+    void *data     = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+
+    struct ethhdr *eth = data;
+    if ((void *)(eth + 1) > data_end)   // 证明以太头完整
+        return XDP_PASS;
+
+    if (eth->h_proto == bpf_htons(ETH_P_IP))
+        return XDP_DROP;
+
+    return XDP_PASS;
+}
+```
+
+`clang -O2 -target bpf` 编译后再 `bpftool prog dump xlated`，得到的
+指令大致是（含义已注释）：
+
+```
+ 0: (61) r2 = *(u32 *)(r1 +0)      ; r2 = ctx->data          （r1 是入口参数 ctx）
+ 1: (61) r3 = *(u32 *)(r1 +4)      ; r3 = ctx->data_end
+ 2: (bf) r1 = r2                   ; r1 = data（eth 指针）
+ 3: (07) r1 += 14                  ; r1 += sizeof(ethhdr)
+ 4: (2d) if r1 > r3 goto pc+6      ; 边界检查：eth 头越界则跳到 PASS
+ 5: (69) r1 = *(u16 *)(r2 +12)     ; r1 = eth->h_proto（偏移 12 的 2 字节）
+ 6: (b7) r0 = 2                    ; r0 = XDP_DROP（预置返回值）
+ 7: (55) if r1 != 0x0008 goto pc+1 ; 与 htons(ETH_P_IP)=0x0008 比较（小端 imm）
+ 8: (95) exit                      ; 返回 r0（此时=2 DROP）
+ 9: (b7) r0 = 1                    ; r0 = XDP_PASS（越界或非 IP 走这里）
+10: (95) exit
+```
+
+对照要点：①每个 C 语句就是 1~2 条 BPF 指令，没有魔法；②`r1` 入口
+即 ctx（§3.2）；③返回值放 `r0`；④编译器把两次 `return XDP_PASS`
+合并成共享的指令 9~10；⑤`0x0008` 而不是 `0x0800`——小端机上
+`bpf_htons` 的产物以立即数形式呈现。看懂这张表，verifier 日志
+（§4.4/§4.5）与 `bpftool prog dump` 就都成了可读材料。
 
 ### 3.2 程序的输入：context
 
@@ -185,6 +233,55 @@ invalid access to packet, off 14 size 14, R2(id=2, off=14, r=0)
 要点：`R2=pkt(off=14, r=0)` 表示“这是一个包指针，允许的读窗口从偏移 14
 开始、可用字节数 0”——`r=0` 时再读就是越界。修法就是补检查。
 
+### 4.5 实例走读：验证器如何“放行”§3.1.1 的程序
+
+拿 §3.1.1 的指令序列，模拟一遍验证器推演（简化自真实日志）。验证器
+对每条指令维护“寄存器状态”（类型 + 数值区间），走到分支就分裂状态：
+
+```
+0: (61) r2 = *(u32 *)(r1 +0)
+   R1=ctx                      ← 从 ctx 读 4 字节：ctx 偏移 0 合法，允许
+   R2_w=inv                    ← 结果是"未知数值"（inv）
+
+1: (61) r3 = *(u32 *)(r1 +4)
+   R3_w=inv
+
+2: (bf) r1 = r2
+   R1_w=inv                    ← data 的数值拷贝（此刻还不是包指针！）
+
+3: (07) r1 += 14
+   R1_w=inv
+
+4: (2d) if r1 > r3 goto pc+6
+   ┌─ 真分支（r1 > r3）：跳到指令 9（XDP_PASS）           ← 该路径安全
+   └─ 假分支（r1 <= r3）：继续，且验证器记住一个事实——
+      "r2(=data) + 14 <= r3(=data_end) 已成立"
+
+   真正的"点石成金"发生在加载器：对 ctx->data / ctx->data_end 的
+   读取会被重写为"包指针"专用指令（内核 convert_ctx_access），
+   验证器随即把 r2 标记为
+   R2_w=pkt(id=2, off=0, r=14)：
+   "包指针，当前偏移 0，允许再读 14 字节"（= 以太头已证明完整）
+
+5: (69) r1 = *(u16 *)(r2 +12)
+   读 pkt 偏移 12 起 2 字节：12+2=14 <= r=14 ✅ 允许
+   R1_w=inv, R2=pkt(id=2, off=0, r=14)
+
+7: (55) if r1 != 0x0008 goto pc+1
+   ┌─ 真：跳到 9（PASS）
+   └─ 假：落到 8
+
+8: (95) exit
+   检查：r0 是标量（2），无未初始化使用 ✅ 路径通过
+9~10: 同样通过
+```
+
+全部路径探索完且都安全 → **VERIFIED**。如果把指令 4 删掉（不比较
+就用 `r2`），指令 5 处的状态是 `R2=pkt(off=0, r=0)`，`12+2 > 0` →
+`invalid access to packet, off 12 size 2`——这就是 §4.2“每次解引用
+前必须有紧邻检查”的推演级解释。排障时对着自己的
+`bpftool prog dump xlated` 输出走一遍这个流程，比盲改代码快得多。
+
 ## 5. JIT 与性能
 
 验证通过后，JIT 把字节码翻成 x86-64/ARM64 本机码（现代内核默认开启，
@@ -219,6 +316,36 @@ Go 侧显式改写 `ProgramSpec.Type`/`AttachTo` 后再加载。
 **license**：使用 GPL-only helper（如 `bpf_probe_write_user`、多数 tracing
 helper）的程序必须声明 `char _license[] SEC("license") = "GPL";`，否则加载
 报 `EINVAL`。网络类程序一般也照抄 GPL，避免踩到隐藏的 GPL-only helper。
+
+### 6.1 helper：eBPF 程序的“手和脚”
+
+eBPF 字节码自己是“够不着”内核的——读不了 map、改不了包、打印不了
+日志。一切外部能力都通过**固定编号的 helper**提供：
+
+```c
+long bpf_map_update_elem(struct bpf_map *map, const void *key,
+                         const void *value, u64 flags);   // 编号 2
+```
+
+- **本质**：内核维护的一张函数表（`kernel/bpf/helpers.o` 里的
+  `BPF_CALL_x` 宏注册，见 13 章 §3 的 `BPF_CALL_5` 展开）。你的
+  `BPF_CALL` 指令带一个立即数编号，JIT 后直接落到对应内核函数；
+- **白名单**：每种程序类型可用哪些 helper 是**验证器按类型检查**的
+  （`get_func_proto` 回调）——XDP 里没有 `bpf_probe_read_user`、
+  tc 里没有 `bpf_xdp_adjust_head`，用错 helper 是新手高频报错
+  （08 章 §1.6）；
+- **参数限制**：helper 最多 5 个参数（R1–R5 传参），这也是
+  `bpf_trace_printk` 只能带 3 个可变参数的根源（13 章）；
+- **怎么查**：①`/usr/include/bpf/bpf_helper_defs.h`——每个 helper
+  的注释里写明"Return/可用程序类型/引入版本"，是最权威的一手资料；
+  ②`sudo bpftool feature probe helper name <name>` 查本机支持；
+  ③常用 helper 分组表见 [09 章 §4](09-kernel-versions.md)；
+- **kfunc（了解即可）**：5.x 起内核函数可以按 BTF 注册进 helper
+  体系（`__ksym` 标记），是 helper 体系的演进方向——新功能优先以
+  kfunc 提供，老的稳定 helper 基本冻结。
+
+写程序前先问自己：“这件事需要哪些 helper？我的程序类型允许吗？”
+——查 `bpf_helper_defs.h`，能省掉一轮必然失败的加载。
 
 ## 7. map：内核态与用户态的共享数据面
 
@@ -301,7 +428,54 @@ CO-RE（Compile Once, Run Everywhere）三件套：
 （tcx 除外），需要借助 `vishvananda/netlink`——这正是本仓库
 `cmd/ruport/main.go` 的做法，详见 05 章。
 
-## 9. 内核版本速查（本仓库相关特性）
+## 9. 组合能力：把小函数拼成大系统
+
+单个 eBPF 程序受 512 字节栈、100 万指令限制，看起来“小”。真正的威力
+在于**组合**——这是从“会用”到“精通”的分水岭：
+
+| 组合机制 | 一句话 | 详见 |
+|---|---|---|
+| **map 交换数据** | 内核程序之间、程序与用户态之间共享状态（ruport 的 message_map/router_map 就是 XDP 与 TC 两个程序间的协作通道） | 04 章 |
+| **尾调用（tail call）** | 程序 A 跳转程序 B（PROG_ARRAY），**不复用栈**，最多 33 层接力——分层协议解析器、pidhide 的分段循环都靠它 | §3.3、08 章 |
+| **BPF-to-BPF 调用** | C 函数直接调用（深度 ≤8），共享代码、编译器可内联 | §3.3 |
+| **多程序共存** | 同一钩子挂多个程序：cgroup 天然程序数组、tcx（6.6+）成链执行 | 05 章 |
+| **freplace（EXT）** | 一次挂载、热替换另一个 BPF 程序的实现，不闪断（`link.Update`） | 05/13 章 |
+| **全局变量/常量** | `.rodata/.data` 让用户态在不重建 map 的情况下给程序“喂参数” | 02 章 §6 |
+
+典型架构模式（ruport 即此模式）：
+
+```
+ 控制面(Go) ──写──▶ map ◀──读── 钩子程序A（XDP 嗅探）
+                     │
+                     └───读/写──▶ 钩子程序B（TC 改包）──尾调用──▶ 程序C…
+```
+
+## 10. 对象模型：FD、ID、pin 与生命周期
+
+内核里的 BPF 世界只有三种“一等对象”，全部由**文件描述符**引用：
+
+| 对象 | 是什么 | 获取方式 | 系统级枚举 |
+|---|---|---|---|
+| program | 验证并 JIT 后的字节码 | `BPF_PROG_LOAD` 返回 FD | `bpftool prog show`（按 ID） |
+| map | 键值存储 | `BPF_MAP_CREATE` 返回 FD | `bpftool map show` |
+| link | 挂载关系（5.7+） | `BPF_LINK_CREATE` 返回 FD | `bpftool link show` |
+
+生命周期规则（新手最容易踩的“程序怎么没了/怎么还挂着”）：
+
+1. **FD 引用计数**：程序/map 被（程序引用、挂载、pin、用户 FD）
+   引用即存活，全部释放即销毁——`bpftool map dump` 突然查不到，
+   多半是最后引用被 Close 了；
+2. **进程退出**：XDP/tcx 等 link 化挂载随 FD 关闭**自动卸载**；
+   经典 tc filter **持有程序引用**，进程死了 filter 还在（ruport
+   必须显式清理的根源，见 05 章 §3.2）；
+3. **pin**：把对象钉在 bpffs（`/sys/fs/bpf`）变成**路径引用**，
+   进程重启后可 `LoadPinned*` 找回——跨进程共享状态的标准做法
+   （02 章 §7）；
+4. **ID 与 FD 的区别**：ID 是系统级唯一编号（重启前不变，可枚举），
+   FD 是进程内句柄；`bpftool prog show id 42` 用 ID，你的 Go 代码
+   用 FD。
+
+## 11. 内核版本速查（本仓库相关特性）
 
 | 特性 | 主线版本 |
 |---|---|
@@ -323,7 +497,7 @@ Ubuntu 24.04（6.8）这类现代环境，与原项目测试环境一致。
 > 全表、常用 helper、挂载/link、syscall 子命令、以及目标机自查命令）
 > 见 [09-kernel-versions.md](09-kernel-versions.md)。
 
-## 10. 最小可对照示例
+## 12. 最小可对照示例
 
 内核侧（`minimal.bpf.c`）：
 
