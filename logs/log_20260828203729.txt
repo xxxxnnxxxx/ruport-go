@@ -1,0 +1,68 @@
+README 内核要求与一次编译适应性说明任务确认日志
+====================================
+时间: 2026-08-28 20:37:29
+分支: develop
+状态: 待用户确认（未修改 README）
+
+一、用户请求复述
+----------------
+ruport-go 使用的 XDP/TC 等功能有内核版本要求；要求分析程序实际
+用到的功能，把内核要求写入（根目录）README.md，并说明"一次编译
+的适应性"——例如 Ubuntu 24.04 下编译的程序能否在 22.04 下使用、
+需要什么内核。
+
+二、功能依赖分析（逐项核对程序源码）
+----------------
+| 功能 | 使用处 | 主线最低版本 |
+|---|---|---|
+| XDP 程序类型（generic/SKB 挂载） | ruport_xdp.bpf.c + AttachXDP | 4.8 |
+| SCHED_CLS(tc) 程序类型 | ruport_tc.bpf.c | 4.1 |
+| clsact qdisc（netlink 挂载） | attachTcFilters | 4.5 |
+| BPF_MAP_TYPE_HASH | message_map/router_map | 3.18 |
+| helper bpf_map_lookup/update_elem | XDP/TC | 3.19 |
+| helper bpf_skb_store_bytes/l4_csum_replace/csum_diff | TC 改写 | 4.1 |
+| helper bpf_trace_printk | bpfprint 宏（GPL 已声明） | 4.1 |
+| BTF map 定义（.maps 段） | 加载器解析 ELF，内核无要求 | — |
+| 程序自身 BTF 上载（BPF_BTF_LOAD，.o 带 -g） | cilium 加载 | 4.18 |
+| XDP link 化挂载（可选路径） | AttachXDP 自动：5.8+ 走 link，老内核回退旧式 | 4.8 |
+| memlock 解除 | RemoveMemlock（<5.11 需要，5.11+ 无害） | — |
+| 权限 | root 或 CAP_BPF+CAP_NET_ADMIN（5.8+ 细分） | — |
+
+三、结论（拟写入 README 的口径）
+----------------
+1. 理论最低内核：4.8（取各功能最大值；且要求 cilium 在无 BTF
+   syscall 的 4.8~4.17 上能跳过程序 BTF——未验证）；
+2. 实际推荐基线：≥5.4（主流发行版自此默认 CONFIG_DEBUG_INFO_BTF=y，
+   BTF 上载无忧）；已验证口径：24.04(6.8) 构建+运行 ✓、
+   22.04(5.15) 满足条件 ✓（用户实机复验）；
+3. 20.04(5.4) 理论可用未实测；18.04(4.15) 不支持（<4.18 BTF）。
+
+四、"一次编译、跨发行版运行"为何成立（拟写入 4 点依据）
+----------------
+1. 产物为纯 Go 静态二进制（无 cgo/glibc 依赖），内嵌 bpf2go
+   编译的 .o（Makefile 未限 -target，默认生成 bpfel+bpfeb 两端序，
+   按架构构建标签自动选用）——与构建机发行版无关；
+2. BPF 字节码为稳定 ISA，构建机 clang 版本不约束目标内核；
+3. 程序只用 UAPI 稳定结构、无 CO-RE 重定位——不依赖目标内核 BTF；
+   仅程序自身 BTF 需目标内核支持 BPF_BTF_LOAD（4.18+）；
+4. XDP 挂载自动适配（5.8+ link/老内核回退）；<5.11 memlock 已处理。
+
+五、README 拟新增章节结构
+----------------
+"内核要求与一次编译的适应性"：
+  ① 功能依赖清单表（第二节内容）
+  ② 最低/推荐内核结论
+  ③ Ubuntu 兼容矩阵（24.04/22.04/20.04/18.04 + 内核版本）
+  ④ 一次编译四点依据（编译产物为什么可移植）
+  ⑤ 目标机运行前自查命令（uname/ls BTF/bpftool feature probe 三条）
+  ⑥ 注意事项（root 或 CAP、generic 模式不挑网卡、native 不需要）
+
+六、不改动的部分
+----------------
+- 仅在根 README.md 新增章节（顺带在"运行"节前插入），不改其他文件。
+
+七、待确认
+----------------
+1. 上述结论口径（理论 4.8 / 推荐 ≥5.4 / 24.04 产物可跑 22.04）
+   是否认可？"已验证"表述仅限 24.04 构建，22.04 运行您尚未实测——
+   README 中拟写"满足自查条件即可运行"而非"已验证"，可否？
