@@ -45,7 +45,6 @@ int tc_ingress(struct __sk_buff *skb) {
 
     __be32 sourceIp = ip4->saddr;
     __be16 sourcePort = tcph->source;
-    __be32 destIp = ip4->daddr;
     __be16 destPort = tcph->dest;
 
     __be64 key = (__be64)(((__be64)sourceIp) << 16) + (__be64)sourcePort;
@@ -100,7 +99,6 @@ int tc_egress(struct __sk_buff *skb) {
     if ((void *)(tcph + 1) > data_end) //
       return TC_ACT_OK;
 
-    __be32 sourceIp = ip4->saddr;
     __be16 sourcePort = tcph->source;
     __be32 destIp = ip4->daddr;
     __be16 destPort = tcph->dest;
