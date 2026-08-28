@@ -175,6 +175,9 @@ tcx 是 link 化的 TC 挂载：多程序自动成链、顺序可控、进程退
 
 ## 4. tracepoint / kprobe / fentry
 
+> 本章为挂载速查；kprobe/fentry 的**底层机制走读、C 侧宏写法、
+> 两者全面对比与完整示例**见 [14-kprobe-fentry.md](14-kprobe-fentry.md)。
+
 ### 4.1 tracepoint（ruport pidhide 用的类型）
 
 ```go

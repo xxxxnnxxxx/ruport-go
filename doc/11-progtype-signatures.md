@@ -218,8 +218,9 @@ sendmsg 系统调用路径上的同类程序（`sk_msg_md *`），用于拦截�
   echo 'p:myprobe tcp_retransmit_skb' > /sys/kernel/debug/tracing/kprobe_events
   cat  /sys/kernel/debug/tracing/events/kprobes/myprobe/id   # 用此 id 开 perf event
   ```
-  cilium 封装：`link.Kprobe("tcp_retransmit_skb", prog, nil)`（老内核
-  走的就是上述 tracefs 路径）。
+cilium 封装：`link.Kprobe("tcp_retransmit_skb", prog, nil)`（老内核
+走的就是上述 tracefs 路径）。机制走读、宏写法与 fentry 的全面对比见
+[14 章](14-kprobe-fentry.md)。
 
 ### 5.2 BPF_PROG_TYPE_TRACEPOINT（4.7）—— ruport pidhide 用的类型
 

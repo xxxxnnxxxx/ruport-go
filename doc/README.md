@@ -23,6 +23,7 @@
 | [11-progtype-signatures.md](11-progtype-signatures.md) | 程序类型参考手册：每种类型的 hook 内核函数位置、context 签名、返回值语义、挂载方式（整理自 ArthurChiao 进阶笔记一） | 查"这个类型怎么用" |
 | [12-map-internals.md](12-map-internals.md) | map 内核实现：hashtab 数据结构与增删查改源码流程、array 家族、map_ops 映射表、cgroup storage、pinning（整理自进阶笔记二/三） | 想懂 map 行为边界 |
 | [13-printk-and-trampoline.md](13-printk-and-trampoline.md) | printk 内幕（5 参限制根源、.rodata 原理、trace 输出格式逐字段）与 BPF trampoline、fentry/fexit trace 另一个 BPF 程序（整理自进阶笔记四） | 调试进阶 |
+| [14-kprobe-fentry.md](14-kprobe-fentry.md) | 动态探针完全指南：kprobe 断点机制走读、kretprobe 与 MaxActive、`BPF_KPROBE`/`BPF_PROG` 宏写法、fentry/fexit/fmod_ret/freplace 详解、**kprobe 与 fentry 全面对比与选型**、vfs_read 双版本完整示例、Go API 全貌 | tracing 必读 |
 
 > 11–13 章整理自外部文章（ArthurChiao's Blog《BPF 进阶笔记》系列，
 > 原文见 https://arthurchiao.art），各章开头有出处与校订说明。
@@ -41,7 +42,7 @@
 - **接手维护 ruport-go**：07 → 08 → 需要哪块补哪块。
 - **程序加载被拒/行为诡异**：直接查 08，需要系统方法再看 10。
 - **不确定目标内核支持某特性**：查 09（§9 有自查命令）。
-- **想深入内核侧原理**：11（类型与钩子）→ 12（map 实现）→ 13（printk/trampoline）。
+- **想深入内核侧原理**：11（类型与钩子）→ 12（map 实现）→ 13（printk/trampoline）→ 14（动态探针）。
 
 ## 约定
 

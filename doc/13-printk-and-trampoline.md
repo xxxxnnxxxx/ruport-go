@@ -129,6 +129,9 @@ BPF 程序 ──调用──▶ [BPF-to-kernel trampoline] ──▶ 内核函�
 
 ### 4.3 fentry/fexit 相比 kprobe/kretprobe 的优势
 
+> 本节从 trampoline 原理出发论证"为什么"；**两种机制的全面对比表、
+> 选型口诀与双版本完整示例**见 [14 章 §6/§7](14-kprobe-fentry.md)。
+
 | 维度 | 说明 |
 |---|---|
 | 性能 | 近零开销。关键函数（如 `tcp_retransmit_skb`）常年多个探针并存；trampoline 在每次 attach/detach 时**重新生成**保证最优，且 detach 设计为不会失败 |
