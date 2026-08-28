@@ -4,7 +4,8 @@
 是 [ruport](../ruport)（C + libbpf）的功能等价移植。
 
 仅支持 Linux（Debian/Ubuntu 系发行版）。**不要在 Windows 下编译**，构建与测试需在
-Linux 上执行 `make`。
+Linux 上执行 `make`。内核版本要求与"一次编译、跨发行版运行"的适应性说明见
+[内核要求与一次编译的适应性](#内核要求与一次编译的适应性)。
 
 ## 功能
 
@@ -68,6 +69,73 @@ make
 ```bash
 make clean
 ```
+
+## 内核要求与一次编译的适应性
+
+### 功能依赖清单
+
+程序实际用到的 eBPF 功能及其主线内核最低版本（逐项核对自
+`bpf/*.bpf.c`、`cmd/ruport/main.go`）：
+
+| 功能 | 使用处 | 最低内核 |
+|---|---|---|
+| XDP 程序类型（generic/SKB 模式挂载） | `ruport_xdp.bpf.c` + `link.AttachXDP(GenericMode)` | 4.8 |
+| TC（SCHED_CLS）程序类型 | `ruport_tc.bpf.c` | 4.1 |
+| clsact qdisc（netlink 挂载） | `attachTcFilters`（egress/ingress filter） | 4.5 |
+| `BPF_MAP_TYPE_HASH` | `message_map` / `router_map` | 3.18 |
+| helper `bpf_map_lookup_elem` / `bpf_map_update_elem` | XDP/TC | 3.19 |
+| helper `bpf_skb_store_bytes` / `bpf_l4_csum_replace` / `bpf_csum_diff` | TC 端口改写与校验和 | 4.1 |
+| helper `bpf_trace_printk` | `bpfprint` 宏（license 已声明 GPL） | 4.1 |
+| 程序自身 BTF 上载（`BPF_BTF_LOAD`，.o 以 `-g` 编译） | 加载时由 cilium/ebpf 提交 | 4.18 |
+| XDP link 化挂载（可选路径） | `AttachXDP` 自动选择：5.8+ 走 link，老内核回退旧式 attach | 4.8 |
+| memlock 解除 | `rlimit.RemoveMemlock()`（<5.11 必需，5.11+ 起 memcg 计费、调用无害） | — |
+
+### 内核要求结论
+
+- **理论最低**：4.8（上表最大值；4.8~4.17 区间依赖加载器在无 BTF
+  syscall 时跳过程序 BTF，**未验证，不建议**）；
+- **推荐基线**：**≥ 5.4**——主流发行版自此默认开启
+  `CONFIG_DEBUG_INFO_BTF=y`，程序 BTF 上载无忧；
+- 未使用 ringbuf / tcx / fentry / CO-RE 等高版本特性，无额外要求。
+
+### Ubuntu 兼容矩阵
+
+| 发行版 | 默认内核 | 运行 24.04 编译的二进制 | 说明 |
+|---|---|---|---|
+| Ubuntu 24.04 | 6.8（HWE 至 6.11） | ✅ 已验证口径（本项目开发/构建环境） | 构建与运行基线 |
+| Ubuntu 22.04 | 5.15（HWE 至 6.8） | ✅ 满足自查条件即可运行 | 5.15 ≥ 5.4 基线，BTF 默认开启 |
+| Ubuntu 20.04 | 5.4 | ⚠️ 理论可用，未实测 | 恰为基线版本；memlock 路径生效 |
+| Ubuntu 18.04 | 4.15 | ❌ 不支持 | < 4.18，BTF 上载不可用，且未验证 |
+
+### 为什么"一次编译、跨发行版运行"成立
+
+1. **纯 Go 静态二进制**：控制端 `ruport` 与发送端 `c3` 均无 cgo /
+   glibc 依赖，二进制与构建机发行版、libc 版本无关；
+2. **eBPF 字节码内嵌且双端序**：bpf2go 默认生成 `bpfel` + `bpfeb`
+   两套 `.o` 并按架构构建标签自动选用——同一个 `make` 产物在小端
+   架构（amd64/arm64 等）通用；构建机 clang 版本不约束目标内核
+   （BPF 指令集是稳定 ISA）；
+3. **无 CO-RE 重定位**：程序只使用 UAPI 稳定结构（`iphdr/tcphdr`
+   等），不读取内核内部结构体，因此**不依赖目标内核的 BTF**；
+   仅程序自身 BTF 需要目标内核支持 `BPF_BTF_LOAD`（4.18+）；
+4. **挂载自动适配**：XDP 在 5.8+ 自动走 link、老内核回退旧式
+   attach；TC 走经典 clsact（4.5+ 无版本分歧）；<5.11 内核的
+   memlock 已在代码中处理。
+
+### 目标机运行前自查（三条命令）
+
+```bash
+uname -r                                   # 内核版本 ≥ 5.4（推荐基线）
+ls -l /sys/kernel/btf/vmlinux              # 存在即可（程序 BTF 上载无忧）
+sudo bpftool feature probe full | grep -E "xdp|clsact"   # 权限与能力最终确认
+```
+
+### 注意事项
+
+- 需 **root**（或 `CAP_BPF` + `CAP_NET_ADMIN`，5.8+ 细分 capability）；
+- XDP 使用 **generic/SKB 模式**，不挑网卡驱动（native 模式非必需）；
+- 内核需启用 `CONFIG_BPF_SYSCALL`（Ubuntu 默认开启）；
+- 与原 C 版一致，本程序未使用任何高版本特性作为前提。
 
 ## 运行
 
