@@ -76,10 +76,6 @@ static __inline void parse_package(void *data_begin, void *data_end) {
           return;
 
         // get the data fo tcp
-        unsigned int len_total = bpf_ntohs(iph->tot_len);
-        unsigned short lenofiph = iph->ihl * 4;
-        unsigned char lenoftcph = tcph->doff * 4;
-
         unsigned char *pdata = (unsigned char *)((unsigned char *)tcph + tcph->doff * 4);
         if ((void *)(pdata + 1) > data_end)
           return;
