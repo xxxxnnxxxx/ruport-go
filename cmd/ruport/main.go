@@ -242,8 +242,8 @@ func main() {
 	}
 
 	// load xdp
-	xdpObjs, err := bpf.LoadXdpObjects(nil)
-	if err != nil {
+	var xdpObjs bpf.XdpObjects
+	if err := bpf.LoadXdpObjects(&xdpObjs, nil); err != nil {
 		log.Fatalf("load xdp/tc error: %v", err)
 	}
 	// XDP_FLAGS_SKB_MODE 对应 link.XDPGenericMode
@@ -258,8 +258,8 @@ func main() {
 	}
 
 	// load tc
-	tcObjs, err := bpf.LoadTcObjects(nil)
-	if err != nil {
+	var tcObjs bpf.TcObjects
+	if err := bpf.LoadTcObjects(&tcObjs, nil); err != nil {
 		xdpLink.Close()
 		xdpObjs.Close()
 		log.Fatalf("load tc error: %v", err)
