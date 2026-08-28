@@ -1,0 +1,70 @@
+kprobe/fentry 专题强化任务理解与确认日志
+====================================
+时间: 2026-08-28 17:15:23
+分支: develop（工作区干净，tmp/ 为用户未跟踪文件）
+状态: 待用户确认（未开始编写）
+
+一、用户反馈复述
+----------------
+用户指出：kprobe/fentry 部分还要更详细。
+
+二、现状盘点（相关内容目前的分布与深度）
+----------------
+- doc/05 §4（45 行）：三个挂载 API 速查（link.Kprobe/Kretprobe/
+  AttachTracing + options 字段），无机制讲解；
+- doc/11 §5.1（约 30 行）：kprobe 的断点触发机制一段、pt_regs 一句、
+  tracefs 挂载路径，查表视角；
+- doc/13 §4：trampoline 原理与 fentry vs kprobe 优势表（偏"为什么
+  fentry 更好"的论证）；
+- 缺失的内容：
+  a) kprobe/kretprobe 的底层机制走读（断点替换→trap→单步恢复；
+     kretprobe 的 trampoline 与并发实例池/MaxActive 限制的由来）；
+  b) C 侧写法体系：SEC("kprobe/xx") 与 BPF_KPROBE 宏、
+     PT_REGS_PARMx 取参、kretprobe 取返回值、uprobe 对照；
+  c) fentry/fexit/fmod_ret/freplace 四者逐一详解（fexit 为何能
+     同时拿参数+返回值、fmod_ret 改返回值、BPF_PROG 宏展开原理）；
+  d) 一个完整可运行的主示例：同一需求（测 vfs_read 耗时）的
+     kprobe+kretprobe 版与 fentry+fexit 版对照实现（C + Go + 输出）；
+  e) 决策表（什么场景选哪个）与专属报错排查（符号不存在/
+     内联函数探测不到/内核无 BTF/参数访问被拒/MaxActive）。
+
+三、执行方案（拟）
+----------------
+方案 A（推荐）：新增 doc/14-kprobe-fentry.md《动态探针完全指南》，
+编号承接 11/12/13 的"进阶"梯队：
+  1. 动态探针家族全景：kprobe/kretprobe/uprobe/uretprobe/
+     fentry/fexit/fmod_ret/freplace/multi 系，一张定位图；
+  2. kprobe 机制走读：int3 断点替换→trap→保存现场→单步原指令→
+     重插断点的完整时序；为何不能探测 __kprobes/notrace/内联
+     函数；符号从哪来（/proc/kallsyms）；
+  3. kretprobe 机制：返回地址替换 + trampoline；MaxActive 并发
+     实例池限制的根源；entry/post handler 模式与配对 map；
+  4. C 侧写法：SEC 命名、BPF_KPROBE 宏 vs 裸 pt_regs 取参
+     （PT_REGS_PARMx/RC）、按 offset 探测内联点、uprobe/USDT 对照；
+  5. fentry/fexit/fmod_ret/freplace 详解：trampoline 动态生成、
+     BTF 原型驱动的参数直读、fexit 双段调用原理、BPF_PROG 宏
+     展开后的样子、fmod_ret 改返回值、freplace 挂另一个 BPF 程序
+     （呼应 13 章 trampoline 原理，不重复其论证）；
+  6. 完整主示例：测 vfs_read 毫秒级耗时的两个版本对照——
+     kprobe+kretprobe+配对 map 版 vs fentry+fexit 版（C 全码 +
+     Go 挂载代码 link.Kprobe/Kretprobe/AttachTracing + 运行
+     输出样例），直观展示两种机制的代码量与信息量差异；
+  7. Go API 全貌：Kprobe/Kretprobe/KprobeOptions 全字段逐个讲
+     （Cookie/Offset/RetprobeMaxActive/TraceFSPrefix，含已核实的
+     版本要求）、AttachTracing/TracingOptions、multi-kprobe 探测；
+  8. 决策表与报错排查：选型决策树 + 常见报错五条（含修复）。
+同步修改：doc/05 §4 开头加"机制与完整示例见 14 章"交叉引用；
+doc/11 §5.1、doc/13 §4.3 各加一句指向；doc/README.md 目录加行、
+阅读路径"进阶"段补 14。
+方案 B（备选）：直接把上述内容塞进 doc/05 §4 扩成 300+ 行。
+缺点：05 章定位是"挂载速查"，混入长篇机制讲解会破坏其速查职责。
+
+四、不改动的部分
+----------------
+其余章节正文与全部代码/Makefile 不动。
+
+五、待确认问题
+----------------
+1. 方案 A（新增 14 章专题 + 三处交叉引用 + 索引更新）可以吗？
+2. 主示例用"测 vfs_read 耗时"的双版本对照（kprobe 系 vs fentry 系，
+   这是社区最经典的入门用例）——可以吗？
