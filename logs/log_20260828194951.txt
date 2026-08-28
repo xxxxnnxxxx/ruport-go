@@ -1,0 +1,78 @@
+成书批3完成日志（第10-15章，第四、五篇）
+====================================
+时间: 2026-08-28 19:49:51
+分支: develop
+前置: 批2经用户认可（"好，继续"）；继续严格对照 OUTLINE.md 契约。
+
+一、交付内容
+----------------
+第四篇 观测的艺术（篇首导语置于第10章文件头）：
+1. p4-ch10-kprobe.md（269 行）第10章 看见内核
+   - 稳定性光谱图（tracepoint/uprobe/kprobe 定位）；
+   - tracepoint 机制走读图（perf_trace→trace_call_bpf 调用链）
+     与 format 文件读法；
+   - kprobe 断点时序图（int3/trap/单步/重插八步）与三属性推论、
+     裸 pt_regs 与 BPF_KPROBE 宏两写法、kallsyms 探测目标；
+   - kretprobe 机制（返回地址偷换/trampoline 槽池/MaxActive）+
+     vfs_read 耗时统计版本一完整代码（C+Go+输出）与"账单"结算；
+   - uprobe/USDT；小结+4练习。
+2. p4-ch11-fentry.md（234 行）第11章 fentry 与 trampoline
+   - kprobe 三宗罪结算表；
+   - trampoline=调用约定翻译官（两套约定对照图+内核→BPF 生成
+     流程图+函数模型来源）；
+   - 四兄弟分工（fexit 包裹式调用原理图）；
+   - vfs_read 版本二完整代码 + 14维对比表 + 选型口诀；
+   - LSM 一节；小结+4练习（含量化两代开销差实验）。
+
+第五篇 精通之路（篇首导语置于第12章文件头）：
+3. p5-ch12-btf-core.md（214 行）第12章 BTF 与 CO-RE
+   - 分发困境三老办法逐条否决（task_struct::comm 偏移问题切入）；
+   - BTF 极简主义（vs DWARF/kind 积木/自查命令）；
+   - CO-RE 三件套精确原理大图（编译期重定位/加载期对账改写/
+     运行期安全读；按字段名匹配的意义）；
+   - vmlinux.h 取舍表（ruport 为何不用）；
+   - 动手：fentry 打印进程名+文件路径（BPF_CORE_READ 读链全码）；
+     小结+3练习。
+4. p5-ch13-map-internals.md（249 行）第13章 map 内核实现
+   - ops 多态骨架/struct bpf_map 关键字段；
+   - hashtab 结构图（bucket/htab_elem/key 取整 8/nulls）；
+     创建（预分配/freelist/hashrnd）/查找（O(1)定桶+value指针）/
+     更新（锁区间/双检/头插RCU/E2BIG）/迭代（桶序）逐流程走读，
+     每条都回扣第4/5章的行为结论；
+   - array 家族与 FD 数组；三个 bpftool 验证实验（预分配内存/
+     E2BIG 对照/迭代顺序）；小结+3练习。
+5. p5-ch14-go-engineering.md（224 行）第14章 Go 工程化
+   - 三条接入路线对比→选 cilium/ebpf 的理由；
+   - 对象模型图/三条加载路径/日志与 PinPath 选项/全局变量重写/
+     pin 接管；
+   - bpf2go 流水线全景图 + 本仓库 Makefile 逐行 + 三颗真实踩坑
+     子弹（-go-package 缺失/ident 大小写决定导出/-Werror 死变量）；
+   - 生命周期责任矩阵（唯一需要手动清理的经典 tc filter）+
+     清理顺序纪律 + link.Update 热更新；
+   - 生产化清单七条；小结+4练习。
+6. p5-ch15-compat-debug.md（205 行）第15章 版本兼容与调试方法论
+   - 版本号≠能力两现实 + 三步自查；
+   - features 包 API 与错误三态语义（探测失败≠不支持大坑警示）+
+     标准降级骨架代码；
+   - 五阶段分诊表 + 分诊三连命令；
+   - printk 三重限制的原理推导（5参调用约定/5.2 rodata/格式白名单）
+     + trace 输出逐字段解读 + trace_marker；
+   - 四条排障动线 checklist；小结+4练习。
+
+二、契约自查
+----------------
+- 六章行数 205~269，均含图/动手或代码/小结练习；
+- 与前文回扣：11.4 量化第10章账单、12.4 解释 ruport 不用
+  vmlinux.h、13.2 回扣第4/5章行为、14.3 踩坑为仓库真实 git 记录、
+  15.4 用第11/14章原理解释 printk 限制；
+- 速查内容持续指向附录（版本矩阵/报错字典/bpftool 手册）。
+
+三、git 提交
+----------------
+38e909a 第10章 / 7d59ba8 第11章 / f5f3f07 第12章
+9cd57d3 第13章 / 76d5492 第14章 / 376056d 第15章
+(+ README 进度更新与本完成日志提交)
+
+四、doc/book/ 现状：序言+15章+契约+目录，共约 4740 行。
+五、待用户审阅批3；通过后执行批4（第16-17章+附录A-G+旧文档处置确认），
+   即全书收尾。

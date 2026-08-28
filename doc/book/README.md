@@ -26,15 +26,15 @@
 - [x] 第 8 章 TC：包的手术台（端口改写/增量校验和/端口复用雏形）—— [p3-ch08-tc.md](p3-ch08-tc.md)
 - [x] 第 9 章 cgroup 与 socket：容器时代的钩子 —— [p3-ch09-cgroup-socket.md](p3-ch09-cgroup-socket.md)
 
-**第四篇 观测的艺术**（批次 3，待写）
-- [ ] 第 10 章 看见内核：tracepoint 与 kprobe
-- [ ] 第 11 章 fentry 与 trampoline：新一代观测
+**第四篇 观测的艺术**
+- [x] 第 10 章 看见内核：tracepoint 与 kprobe（断点时序/配对 map 耗时统计）—— [p4-ch10-kprobe.md](p4-ch10-kprobe.md)
+- [x] 第 11 章 fentry 与 trampoline（翻译官原理/四兄弟/版本二对比）—— [p4-ch11-fentry.md](p4-ch11-fentry.md)
 
-**第五篇 精通之路**（批次 3，待写）
-- [ ] 第 12 章 BTF 与 CO-RE
-- [ ] 第 13 章 map 的内核实现
-- [ ] 第 14 章 Go 工程化：cilium/ebpf 与 bpf2go
-- [ ] 第 15 章 版本兼容与调试方法论
+**第五篇 精通之路**
+- [x] 第 12 章 BTF 与 CO-RE（三件套精确原理/vmlinux.h 取舍）—— [p5-ch12-btf-core.md](p5-ch12-btf-core.md)
+- [x] 第 13 章 map 的内核实现（hashtab 源码走读/bpftool 验证实验）—— [p5-ch13-map-internals.md](p5-ch13-map-internals.md)
+- [x] 第 14 章 Go 工程化：cilium/ebpf 与 bpf2go（生命周期责任矩阵/生产化清单）—— [p5-ch14-go-engineering.md](p5-ch14-go-engineering.md)
+- [x] 第 15 章 版本兼容与调试方法论（features 探测/五阶段分诊/四条动线）—— [p5-ch15-compat-debug.md](p5-ch15-compat-debug.md)
 
 **第六篇 实战：ruport-go**（批次 4，待写）
 - [ ] 第 16 章 从需求到架构
