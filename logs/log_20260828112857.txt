@@ -1,0 +1,60 @@
+loader.go 与 bpf2go 生成函数名冲突修复方案确认日志
+====================================
+时间: 2026-08-28 11:28:57
+分支: develop
+状态: 待用户确认（未修改代码）
+
+一、问题定位（用户 Linux 上 go build 报错）
+----------------
+报错：
+  internal/bpf/xdp_bpfel.go:54: LoadXdpObjects redeclared
+  internal/bpf/tc_bpfel.go:53:  LoadTcObjects redeclared
+  internal/bpf/loader.go:12: undefined: loadXdpObjects
+  internal/bpf/loader.go:23: undefined: loadTcObjects
+
+根因（已对照 cilium/ebpf v0.22.0 源码 cmd/bpf2go/gen/output.go 核实）：
+1. bpf2go 生成加载函数名的规则是
+   maybeExport("load" + toUpperFirst(ident) + "Objects")：
+   - ident 首字母大写（我们的 "Xdp"/"Tc"）→ 生成【导出的】
+     LoadXdpObjects / LoadTcObjects，签名为填充式：
+     func LoadXdpObjects(obj any, opts *ebpf.CollectionOptions) error
+   - ident 首字母小写 → 生成未导出的 loadXxxObjects；
+2. 此前我依据模块缓存中的测试样例（小写 ident "test" 生成的
+   loadTestObjects）推断"生成函数始终未导出、需要手写封装"，因此在
+   internal/bpf/loader.go 写了 LoadXdpObjects/LoadTcObjects 封装并调用
+   不存在的 loadXdpObjects/loadTcObjects——大写 ident 下这个推断是
+   错的：生成的函数本身就是导出的，我的封装与它重名且引用了不存在的
+   小写函数；
+3. 也就是说：loader.go 这个封装在当前 ident 命名下从一开始就是多余
+   的，删除后直接调用生成函数即可。
+
+二、修复方案（拟，二选一）
+----------------
+方案 A（推荐）：
+  a) 删除 internal/bpf/loader.go（25 行，本人手写、非用户文件；
+     删除原因：与生成的导出函数重名冲突，且其功能已由生成函数提供）；
+  b) cmd/ruport/main.go 改为直接调用生成函数：
+       var xdpObjs bpf.XdpObjects
+       if err := bpf.LoadXdpObjects(&xdpObjs, nil); err != nil { ... }
+       var tcObjs bpf.TcObjects
+       if err := bpf.LoadTcObjects(&tcObjs, nil); err != nil { ... }
+     （后续对 xdpObjs/tcObjs 的字段访问、Close 均不变）；
+  c) internal/bpf/doc.go 的包注释删去"手写加载封装"的表述；
+  d) 修正文档中错误的命名规则描述（doc/02 §3.3、doc/03 §4、doc/07 §7）：
+     大写 ident → 生成导出的填充式 LoadXxxObjects，无需手写封装；
+     小写 ident → 未导出，才需要封装。
+  影响：无功能变化；仅去掉多余间接层并纠正文档。
+
+方案 B（不删除文件的备选）：
+  把 loader.go 中的封装改名为 NewXdpObjects/NewTcObjects 并改调用
+  生成的 LoadXdpObjects/LoadTcObjects；main.go 不动。
+  影响：保留一层没有实际作用的包装代码；文档仍需同样修正。
+
+三、不改动的部分
+----------------
+- bpf/、Makefile、其余 internal/ 与 cmd/c3 不动；
+- 修复后需用户在 Linux 重新 make 验证（本次 go build 应能通过）。
+
+四、待确认问题
+----------------
+1. 采用方案 A（删除 loader.go + 直接调用生成函数）还是方案 B？
