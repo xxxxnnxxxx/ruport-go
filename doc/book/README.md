@@ -16,15 +16,15 @@
 - [x] 第 2 章 第一个程序：从零跑起来（XDP 计数器全闭环/全旅程总地图）—— [p1-ch02-first-program.md](p1-ch02-first-program.md)
 - [x] 第 3 章 与验证器初遇（日志解剖/状态推演/包访问三模式）—— [p1-ch03-verifier.md](p1-ch03-verifier.md)
 
-**第二篇 数据之道**（批次 2，待写）
-- [ ] 第 4 章 让内核把数据交出来（map 基础）
-- [ ] 第 5 章 更快、更大、更稳（map 进阶）
-- [ ] 第 6 章 别再轮询了：事件驱动（ringbuf）
+**第二篇 数据之道**
+- [x] 第 4 章 让内核把数据交出来（hash-array 行为差/两侧 API/布局字节序三坑）—— [p2-ch04-maps.md](p2-ch04-maps.md)
+- [x] 第 5 章 更快、更大、更稳（perCPU/LRU/迭代批量/queue-lpm）—— [p2-ch05-maps-advanced.md](p2-ch05-maps-advanced.md)
+- [x] 第 6 章 别再轮询了：事件驱动（ringbuf + openat 监控完整项目）—— [p2-ch06-ringbuf.md](p2-ch06-ringbuf.md)
 
-**第三篇 网络即战场**（批次 2，待写）
-- [ ] 第 7 章 XDP：最早的那一刀
-- [ ] 第 8 章 TC：包的手术台
-- [ ] 第 9 章 cgroup 与 socket：容器时代的钩子
+**第三篇 网络即战场**
+- [x] 第 7 章 XDP：最早的那一刀（收包全景地图/迷你防火墙）—— [p3-ch07-xdp.md](p3-ch07-xdp.md)
+- [x] 第 8 章 TC：包的手术台（端口改写/增量校验和/端口复用雏形）—— [p3-ch08-tc.md](p3-ch08-tc.md)
+- [x] 第 9 章 cgroup 与 socket：容器时代的钩子 —— [p3-ch09-cgroup-socket.md](p3-ch09-cgroup-socket.md)
 
 **第四篇 观测的艺术**（批次 3，待写）
 - [ ] 第 10 章 看见内核：tracepoint 与 kprobe
