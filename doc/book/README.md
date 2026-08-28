@@ -37,12 +37,18 @@
 - [x] 第 15 章 版本兼容与调试方法论（features 探测/五阶段分诊/四条动线）—— [p5-ch15-compat-debug.md](p5-ch15-compat-debug.md)
 
 **第六篇 实战：ruport-go**（批次 4，待写）
-- [ ] 第 16 章 从需求到架构
-- [ ] 第 17 章 逐模块精读与端到端联调
+- [x] 第 16 章 从需求到架构（约束映射/三件套推演/数据契约与端口学习）—— [p6-ch16-design.md](p6-ch16-design.md)
+- [x] 第 17 章 逐模块精读与端到端联调（含扩展练习与全书结语）—— [p6-ch17-ruport-walkthrough.md](p6-ch17-ruport-walkthrough.md)
 
-**附录**（批次 4，待建）
-A 程序类型表 · B map 类型表 · C helper 分组表 · D bpftool 命令 ·
-E 内核版本矩阵 · F 报错字典 · G 参考资料与致谢
+**附录**
+- [x] 附录 A 程序类型速查表 —— [appendix-a-progtypes.md](appendix-a-progtypes.md)
+- [x] 附录 B map 类型速查表 —— [appendix-b-maptypes.md](appendix-b-maptypes.md)
+- [x] 附录 C helper 分组速查表 —— [appendix-c-helpers.md](appendix-c-helpers.md)
+- [x] 附录 D bpftool 命令速查 —— [appendix-d-bpftool.md](appendix-d-bpftool.md)
+- [x] 附录 E 内核版本-特性矩阵 —— [appendix-e-versions.md](appendix-e-versions.md)
+- [x] 附录 F 常见报错字典 —— [appendix-f-errors.md](appendix-f-errors.md)
+- [x] 附录 G 参考资料与致谢 —— [appendix-g-references.md](appendix-g-references.md)
 
-> 旧的专题文档（doc/00~14）在成书过程中作为素材池；全书完成并
-> 验收后统一处置（届时另行确认）。
+> **成书状态**：序言 + 六篇 17 章 + 附录 A-G 全部完成（四批交付）。
+> 旧的专题文档（doc/00~14）在成书期间作为素材池与速查并存，
+> 处置方案待确认后执行（见完成日志）。
