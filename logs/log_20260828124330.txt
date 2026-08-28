@@ -1,0 +1,45 @@
+loader.go 与 bpf2go 生成函数名冲突修复完成日志
+====================================
+时间: 2026-08-28 12:43:30
+分支: develop
+前置: 方案确认见 log_20260828112857.txt，用户选择方案 A
+
+一、实施内容
+----------------
+1. 删除 internal/bpf/loader.go（25 行，经用户确认）：与 bpf2go 在
+   大写 ident 下生成的导出函数 LoadXdpObjects/LoadTcObjects 重名，
+   且其封装的 loadXdpObjects/loadTcObjects 并不存在；
+2. cmd/ruport/main.go 改为直接调用生成的填充式 API：
+     var xdpObjs bpf.XdpObjects
+     if err := bpf.LoadXdpObjects(&xdpObjs, nil); err != nil {...}
+     var tcObjs bpf.TcObjects
+     if err := bpf.LoadTcObjects(&tcObjs, nil); err != nil {...}
+   后续字段访问/挂载/Close 逻辑不变；
+3. internal/bpf/doc.go 包注释更新（说明大写 ident 下无需手写封装）；
+4. 文档修正（doc/02 §1与§3.3、doc/03 §4 与 libbpf 对照表、doc/07 §7）：
+   命名规则改为经源码核实的准确描述——
+   加载函数名 = load + toUpperFirst(ident) + Objects，ident 为导出
+   标识符时整体首字母大写（Xdp → LoadXdpObjects；xdp →
+   loadXdpObjects 需封装）；并在 doc/03 记录本次踩坑教训（勿以其他
+   ident 的样例推断自己 ident 的生成结果）。
+
+二、验证
+----------------
+- 用与真实生成形状一致的临时桩（导出 LoadXdpObjects/LoadTcObjects，
+  obj any + opts 填充式签名）执行 GOOS=linux go build ./... 与
+  go vet 全部通过，gofmt 无差异；桩验证后已删除未提交；
+- 用户侧：generate 已成功过，go build 在本次修复后应通过（剩余
+  可能问题仅在实机运行阶段）。
+
+三、git 提交
+----------------
+0f324f3 docs: 添加 loader.go 与 bpf2go 生成函数名冲突修复方案确认日志
+c4ef7d9 fix: 删除多余 loader.go 封装, main.go 直接调用 bpf2go 生成的导出...
+b2b70e9 docs: 修正 bpf2go 生成函数命名规则描述...并记录踩坑
+(+ 本完成日志提交)
+
+四、备注
+----------------
+- main 尚未合入本修复，待用户指示；
+- doc/06 示例 1 的 Makefile 用小写 ident（count），示例 main.go 走
+  LoadCollectionSpec 手动路径，不受本次命名规则影响，无需改动。
