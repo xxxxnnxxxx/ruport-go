@@ -65,6 +65,10 @@ int tc_ingress(struct __sk_buff *skb) {
             // 读 4 字节会把紧随其后的序列号高 16 位卷进增量，而下面只改写
             // 2 字节端口，校验和会因此出错（对端静默丢弃）
             const __be32 old_port = tcph->dest;
+            // 旧目的 IP 同样必须在任何 bpf_skb_store_bytes 之前读取：
+            // 该 helper 会使验证器先前推导的包指针（data/data_end 及派生）
+            // 全部失效，store 后再解引用 ip4 会被拒绝加载
+            const __be32 old_ip = ip4->daddr;
             // SNAT: pod_ip -> cluster_ip, then update L3 and L4 header
             sum = bpf_csum_diff((void *)&old_port, 4, (void *)&client_port, 4, 0);
             bpf_skb_store_bytes(skb, l4_off + offsetof(struct tcphdr, dest), (void *)&client_port, 2, 0);
@@ -74,7 +78,6 @@ int tc_ingress(struct __sk_buff *skb) {
             // 服务地址（DNAT），包随后按路由走向 veth（纯转发，宿主不产生
             // socket）。入方向包为软件校验和状态，IP 头增量修正安全。
             if (value->nativeip != 0) {
-                const __be32 old_ip = ip4->daddr;
                 __wsum l3sum = bpf_csum_diff((void *)&old_ip, 4, (void *)&value->nativeip, 4, 0);
                 bpf_skb_store_bytes(skb, l3_off + offsetof(struct iphdr, daddr), (void *)&value->nativeip, 4, 0);
                 bpf_l3_csum_replace(skb, l3_off + offsetof(struct iphdr, check), 0, l3sum, 0);
