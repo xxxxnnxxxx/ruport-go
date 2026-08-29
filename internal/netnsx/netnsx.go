@@ -9,6 +9,7 @@ package netnsx
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -52,11 +53,70 @@ func vethNames(name string) (host, peer string) {
 	return base + "-host", base + "-ns"
 }
 
+// subnetFallbacks 为网段冲突时的备选表（TEST-NET 保留段，真实网络不会
+// 出现这些路由；首选段由调用方指定）。
+var subnetFallbacks = []string{
+	"198.51.100.0/24", // TEST-NET-2
+	"203.0.113.0/24",  // TEST-NET-3
+	"172.31.255.0/24", // RFC1918 172.16/12 的尾段
+}
+
+// subnetInUse 返回 subnet 与宿主现有地址/路由的重叠点描述；空串表示无冲突。
+// 只做双方网段基址的互相包含判断，足以覆盖常见冲突形态。
+func subnetInUse(subnet *net.IPNet) string {
+	if links, err := netlink.LinkList(); err == nil {
+		for _, l := range links {
+			addrs, err := netlink.AddrList(l, netlink.FAMILY_V4)
+			if err != nil {
+				continue
+			}
+			for _, a := range addrs {
+				if subnet.Contains(a.IPNet.IP) || a.IPNet.Contains(subnet.IP) {
+					return fmt.Sprintf("address %s on %s", a.IPNet, l.Attrs().Name)
+				}
+			}
+		}
+	}
+	if routes, err := netlink.RouteList(nil, netlink.FAMILY_V4); err == nil {
+		for _, r := range routes {
+			if r.Dst == nil { // 默认路由：网关落在候选网段内同样致命
+				if r.Gw != nil && subnet.Contains(r.Gw) {
+					return fmt.Sprintf("default gateway %s", r.Gw)
+				}
+				continue
+			}
+			if r.Dst.Contains(subnet.IP) || subnet.Contains(r.Dst.IP) {
+				return fmt.Sprintf("route %s", r.Dst)
+			}
+		}
+	}
+	return ""
+}
+
 // Ensure 幂等建立 netns 隐藏模式所需的全部网络设施：
 // named netns、veth 对（宿主 .1 网关 / ns 内 .2 服务）、ns 内 lo 与
 // 默认路由、关闭 veth 两端 TX 校验和卸载、打开 ip_forward。
 // 重复调用安全（已存在则复用）。失败时调用方无需 Destroy（仅句柄需 Close）。
 func Ensure(name string, subnet *net.IPNet) (*NS, error) {
+	// 网段冲突检测与自动回退：重叠网段会把去往原网段的流量引进 veth
+	// 黑洞（实测 10.0.0.0/24 常与内网重叠，曾导致整机断网）
+	if c := subnetInUse(subnet); c != "" {
+		fallback := ""
+		for _, cand := range subnetFallbacks {
+			_, n, err := net.ParseCIDR(cand)
+			if err != nil || n.String() == subnet.String() || subnetInUse(n) != "" {
+				continue
+			}
+			fallback = n.String()
+			_, subnet, _ = net.ParseCIDR(fallback)
+			break
+		}
+		if fallback == "" {
+			return nil, fmt.Errorf("ns subnet %s conflicts with host (%s) and all fallback subnets are in use; specify another via -ns-subnet", subnet, c)
+		}
+		log.Printf("netnsx: subnet conflicts with host (%s), fallback to %s", c, fallback)
+	}
+
 	ns := &NS{Name: name, IPNet: subnet}
 	ns.HostVeth, ns.NsVeth = vethNames(name)
 

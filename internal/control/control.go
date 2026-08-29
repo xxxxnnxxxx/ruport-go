@@ -57,7 +57,9 @@ func New(cfg Config) *Controller {
 		cfg.NetnsName = "ruport_ns"
 	}
 	if cfg.NetnsSubnet == nil {
-		_, cfg.NetnsSubnet, _ = net.ParseCIDR("10.0.0.0/24")
+		// 默认 TEST-NET-1 保留段，真实网络不会路由该网段（netnsx 还会
+		// 做冲突检测与备选回退）
+		_, cfg.NetnsSubnet, _ = net.ParseCIDR("192.0.2.0/24")
 	}
 	return &Controller{
 		cfg:      cfg,

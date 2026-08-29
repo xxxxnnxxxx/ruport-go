@@ -220,7 +220,7 @@ func main() {
 
 	flag.BoolVar(&netnsMode, "N", false, "netns 预热：启动即建立命名空间（不指定时由敲门指令 05 懒初始化）")
 	flag.StringVar(&nsName, "ns-name", "ruport_ns", "netns 隐藏模式：命名空间名称")
-	flag.StringVar(&nsSubnet, "ns-subnet", "10.0.0.0/24", "netns 隐藏模式：内网段（.1 网关 / .2 服务）")
+	flag.StringVar(&nsSubnet, "ns-subnet", "192.0.2.0/24", "netns 内网段（TEST-NET 保留段；冲突时自动回退备选）")
 	flag.StringVar(&execCmd, "exec", "", "netns 隐藏模式：在命名空间内拉起的服务命令（空格切分，不走 shell）")
 	flag.BoolVar(&execDetach, "exec-detach", false, "服务不随 ruport 退出")
 	flag.BoolVar(&nsDestroy, "ns-destroy", false, "销毁 netns 与 veth 后退出（异常残留处置用；正常退出即自动清场）")
