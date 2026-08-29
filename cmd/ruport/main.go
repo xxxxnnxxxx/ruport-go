@@ -124,15 +124,17 @@ func attachTcFilters(ifindex int, ingress, egress *ebpf.Program) (*tcAttach, err
 		}
 	}
 
-	// hook tc egress (tx 出口)
+	// hook tc egress (tx 出口)。FilterReplace = 创建或顶替同 handle/prio
+	// 的残留 filter（对齐原版 BPF_TC_F_REPLACE 与 XDP SKB 模式的替换语义，
+	// 上次非正常退出后无需手工清理 clsact）
 	egressFilter := newFilter(netlink.HANDLE_MIN_EGRESS, egress)
-	if err := netlink.FilterAdd(egressFilter); err != nil {
+	if err := netlink.FilterReplace(egressFilter); err != nil {
 		return nil, fmt.Errorf("attach tc egress: %w", err)
 	}
 
 	// hook tc ingress (rx 入口)
 	ingressFilter := newFilter(netlink.HANDLE_MIN_INGRESS, ingress)
-	if err := netlink.FilterAdd(ingressFilter); err != nil {
+	if err := netlink.FilterReplace(ingressFilter); err != nil {
 		_ = netlink.FilterDel(egressFilter)
 		return nil, fmt.Errorf("attach tc ingress: %w", err)
 	}

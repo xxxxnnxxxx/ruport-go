@@ -1,0 +1,21 @@
+log_20260829173029.txt
+
+【确认事项】ruport-go 对等同步：TC 挂载 FilterReplace（顶替残留 filter）
+
+【背景】
+原 C 项目 loadtcfilter 存在"错误路径未置 0 返回导致 TC 挂载失败仍静默
+运行"的 bug（本轮排障实证），已按 A+B 方案修复。ruport-go 侧本就具备
+A 的语义（attachTcFilters 出错直接 log.Fatalf 退出），本次补齐 B 的
+对等修改，保持两版行为一致。
+
+【确认执行的修改】（用户已确认 A+B + ruport-go 同步）
+cmd/ruport/main.go 的 attachTcFilters：egress/ingress 两处
+netlink.FilterAdd 改为 netlink.FilterReplace（创建或顶替同 handle/prio
+的 filter，语义等同 libbpf 的 BPF_TC_F_REPLACE）。错误处理路径不变
+（仍为显式报错退出）。
+
+【影响评估】
+- 成功路径行为不变；仅"存在残留 filter"场景由报错退出改为自动顶替，
+  与 XDP SKB 模式的替换语义一致，非正常退出后重启无需手工清理。
+- 不触碰协议、map、改写逻辑；需 Linux 重新 make（go 代码变更无需
+  重编 BPF，但 make 流程会一并完成）。
