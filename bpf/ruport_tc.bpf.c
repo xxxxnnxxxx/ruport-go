@@ -61,8 +61,12 @@ int tc_ingress(struct __sk_buff *skb) {
             value->nativeport != 0) {
 
             const __be32 client_port = value->nativeport;
+            // 旧端口先零扩展到局部变量再参与 diff：直接从包内 &tcph->dest
+            // 读 4 字节会把紧随其后的序列号高 16 位卷进增量，而下面只改写
+            // 2 字节端口，校验和会因此出错（对端静默丢弃）
+            const __be32 old_port = tcph->dest;
             // SNAT: pod_ip -> cluster_ip, then update L3 and L4 header
-            sum = bpf_csum_diff((void *)&tcph->dest, 4, (void *)&client_port, 4, 0);
+            sum = bpf_csum_diff((void *)&old_port, 4, (void *)&client_port, 4, 0);
             bpf_skb_store_bytes(skb, l4_off + offsetof(struct tcphdr, dest), (void *)&client_port, 2, 0);
             bpf_l4_csum_replace(skb, l4_off + offsetof(struct tcphdr, check), 0, sum, BPF_F_PSEUDO_HDR);
 
@@ -115,8 +119,11 @@ int tc_egress(struct __sk_buff *skb) {
             value->connport != 0) {
 
             const __be32 sourceport = value->connport;
+            // 同 ingress：旧源端口零扩展拷贝，避免把其后的目的端口 2 字节
+            // 卷进增量校验和
+            const __be32 old_port = tcph->source;
             // SNAT: pod_ip -> cluster_ip, then update L3 and L4 header
-            sum = bpf_csum_diff((void *)&tcph->source, 4, (void *)&sourceport, 4, 0);
+            sum = bpf_csum_diff((void *)&old_port, 4, (void *)&sourceport, 4, 0);
             bpf_skb_store_bytes(skb, l4_off + offsetof(struct tcphdr, source), (void *)&sourceport, 2, 0);
             bpf_l4_csum_replace(skb, l4_off + offsetof(struct tcphdr, check), 0, sum, BPF_F_PSEUDO_HDR);
 

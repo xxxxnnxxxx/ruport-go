@@ -1,0 +1,48 @@
+log_20260829130340.txt
+
+【确认事项】修复 TC 端口改写的增量校验和计算错误（ruport-go + 原 C 项目 ruport + 书 errata）
+
+【背景 / 用户报告】
+用户以设计内的正确参数测试端口复用仍然失败：
+  敲门：./c3 -t 172.16.17.33 -p 80 -1 -S 172.16.76.86 -P 3333 -x 80 -y 22
+  连接：ssh -o "ProxyCommand=nc -p 3333 %h %p" xylab@172.16.17.33 -p 80
+ruport 端日志显示路由插入成功（insert a router: ip: 172.16.76.86, port: 3333），
+但 ssh 报 "Connection closed by UNKNOWN port 6553(5)"；web 服务器与 sshd
+均未参与该连接。用户怀疑原 C 版存在 bug，经逐行复查代码确认。
+
+【根因】
+ruport.tc.c（原版）与 ruport_tc.bpf.c（移植版）的"手术三步"中，
+bpf_csum_diff 的 from 侧直接使用包内指针：
+  ingress: bpf_csum_diff((void *)&tcph->dest,   4, &client_port, 4, 0)
+  egress : bpf_csum_diff((void *)&tcph->source, 4, &sourceport,  4, 0)
+从包内读 4 字节，端口字段之后紧邻的 2 字节被错误卷入增量校验和：
+  ingress 多减 TCP 序列号高 16 位（每条连接随机）
+  egress  多减目的端口（即客户端端口，固定值）
+而 bpf_skb_store_bytes 只改写 2 字节端口，校验和因此错一个非零值：
+每个被改写的包都被对端内核校验失败后静默丢弃（不回 RST），
+SYN 永远得不到应答，客户端 nc 同步重传约 2 分钟后超时退出，
+ssh 表现为 "Connection closed by UNKNOWN port 65535"。
+该 bug 导致端口复用的核心功能完全无法建立连接（敲门走 XDP 只嗅探
+不改包，不受影响，因此敲门/插路由一切正常）。
+
+【确认执行的修改】（用户已回复"确认，原c项目也改掉"）
+1. ruport-go/bpf/ruport_tc.bpf.c（ingress/egress 两处）：
+   旧端口先读入零扩展的 4 字节局部变量（const __be32 old_port = tcph->dest;
+   egress 为 tcph->source），bpf_csum_diff 的 from 侧从该局部变量取值。
+2. 原 C 项目 D:\SideProjects\Projects\ruport\ruport.tc.c 同样两处同款修复
+   （该仓库单独记日志并提交）。
+3. 书 doc/book/p3-ch08-tc.md：
+   - 更正 8.3.3 要点③中"改的是 2 字节端口，但 bpf_csum_diff 传 4 字节宽
+     （值等同）"的错误说法——等价仅对零扩展局部变量成立，包内指针会把
+     相邻字段卷进增量；
+   - 8.3.3 与 8.4 的两个教学示例由"包内指针 + size 2"统一改为
+     "零扩展局部变量 + size 4"的确定正确写法，与修复后的工程代码一致。
+
+【影响评估】
+- 仅改变增量校验和的取值来源（局部变量替代包内指针），端口改写目标、
+  router_map 匹配条件、端口学习机制、BPF_F_PSEUDO_HDR 用法全部保持
+  不变，不改变任何原有流程与布局。
+- 修复后被改写包的 TCP 校验和正确，三次握手可正常完成。
+- internal/bpf 下 bpf2go 生成物未入库（.gitignore），Linux 上重新 make
+  即可（build 依赖 generate，会自动重编 .bpf.c 并生成绑定）；原 C 项目
+  同样在 Linux 上重新 make。
