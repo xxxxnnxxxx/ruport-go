@@ -1,0 +1,33 @@
+log_20260830001623
+
+【事项】修复 named netns 创建在 Go 多线程下挂载错命名空间的严重 bug（两次整机断网的真正根因）
+
+【故障复盘】
+ensureNamedNS 依照 ip netns add 的配方实现，但挂载源用了 /proc/self/ns/net。
+ip 是单线程程序，/proc/self 即其（已 unshare 的）命名空间；而 Go 中该代码
+跑在工作线程上：Unshare(CLONE_NEWNET) 只切换了当前线程，/proc/self 指向
+主线程（仍在根命名空间）——于是 /var/run/netns/<name> 实际绑定的是【根
+命名空间】。后续所有"ns 内"操作全部作用于宿主：
+  - LinkSetNsFd(peer, fd) 等于移回根 ns（peer 未真正移走）；
+  - NewHandleAt(fd) 的 AddrAdd/RouteAdd 落在宿主路由表，
+    default via 192.0.2.1（此前是 10.0.0.1）被写入宿主默认路由；
+  - 全部出网流量被引进无出口的 veth，整机断网仅剩带外控制台。
+这同时解释了 2026-08-29 两次断网（第一次误判为 10.0.0.0/24 网段冲突，
+该冲突论只对了一半：即使网段不冲突，默认路由劫持也会断网）。
+
+【修复内容】
+- 挂载源改为 /proc/thread-self/ns/net（Linux 3.17+，当前线程自身）；
+- 新增 nsCurrent()：WithNetNS/ensureNamedNS 获取"当前线程"命名空间
+  一律走 /proc/thread-self（netns.Get 的 /proc/self 语义在多线程下同样
+  指向主线程）；
+- 新增 assertDistinctNS()：创建/打开 named netns 后校验其确实不是根
+  命名空间（比较 ns 文件 inode）；既有条目若指向根 ns（旧版本残留）
+  自动清理重建，新建结果不隔离则直接报错拒绝继续。
+
+【用户环境恢复（VNC）】
+ip route 查看被劫持的 default via 192.0.2.1（或 10.0.0.1）并删除，
+必要时重加真实网关默认路由；sudo ./ruport -ns-destroy 清残留或重启机器。
+
+【影响评估】
+仅修 netns 创建/线程命名空间语义；Ensure 其余流程、清场、BPF、控制面
+均不变。修复后 ns 真正隔离，宿主路由表不再被写入。

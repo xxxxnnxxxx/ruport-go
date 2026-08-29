@@ -236,15 +236,53 @@ func Ensure(name string, subnet *net.IPNet) (*NS, error) {
 	return ns, nil
 }
 
-// ensureNamedNS 打开既有的 named netns，不存在则创建（ip netns add 同款配方）。
+// nsCurrent 返回当前线程所在的网络命名空间句柄。
+// 必须用 /proc/thread-self：Go 多线程下 /proc/self 指向主线程的命名空间，
+// 在工作线程上切换 ns 后读 /proc/self 会拿到错误的（主线程的）句柄。
+func nsCurrent() (netns.NsHandle, error) {
+	return netns.GetFromPath("/proc/thread-self/ns/net")
+}
+
+// assertDistinctNS 校验 fd 指向的命名空间不是主线程（根）命名空间。
+// 防御 ensureNamedNS 的历史 bug：曾把根 ns 挂成 named netns，导致后续
+// "ns 内"配置全部落在宿主（默认路由被写进宿主路由表，整机断网）。
+func assertDistinctNS(fd netns.NsHandle) error {
+	got, err := os.NewFile(uintptr(fd), "netns").Stat()
+	if err != nil {
+		return err
+	}
+	root, err := os.Stat("/proc/self/ns/net") // 主线程（根）命名空间
+	if err != nil {
+		return err
+	}
+	g, _ := got.Sys().(*syscall.Stat_t)
+	r, _ := root.Sys().(*syscall.Stat_t)
+	if g != nil && r != nil && g.Dev == r.Dev && g.Ino == r.Ino {
+		return errors.New("netns handle points to the root namespace (creation bug?)")
+	}
+	return nil
+}
+
+// ensureNamedNS 打开既有的 named netns，不存在则创建（ip netns add 同款
+// 配方：unshare 后将命名空间文件绑定挂载到 /var/run/netns/<name>）。
+// 挂载源必须是 /proc/thread-self（当前已 unshare 的线程），绝不能用
+// /proc/self——后者是主线程的（根）命名空间。
 func ensureNamedNS(name string) (netns.NsHandle, error) {
 	if fd, err := netns.GetFromName(name); err == nil {
-		return fd, nil
+		// 既有条目可能来自旧版本的错误挂载（指向根 ns）：清掉重建
+		if err := assertDistinctNS(fd); err == nil {
+			return fd, nil
+		}
+		fd.Close()
+		log.Printf("netnsx: stale %s points to root namespace, recreating", name)
+		path := "/var/run/netns/" + name
+		_ = unix.Unmount(path, 0)
+		os.Remove(path)
 	}
 
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	orig, err := netns.Get()
+	orig, err := nsCurrent()
 	if err != nil {
 		return -1, err
 	}
@@ -263,11 +301,19 @@ func ensureNamedNS(name string) (netns.NsHandle, error) {
 		return -1, err
 	}
 	f.Close()
-	if err := unix.Mount("/proc/self/ns/net", path, "bind", unix.MS_BIND, ""); err != nil {
+	if err := unix.Mount("/proc/thread-self/ns/net", path, "bind", unix.MS_BIND, ""); err != nil {
 		os.Remove(path)
 		return -1, err
 	}
-	return netns.GetFromName(name)
+	fd, err := netns.GetFromName(name)
+	if err != nil {
+		return -1, err
+	}
+	if err := assertDistinctNS(fd); err != nil {
+		fd.Close()
+		return -1, fmt.Errorf("created netns %s failed isolation check: %w", name, err)
+	}
+	return fd, nil
 }
 
 // Destroy 彻底销毁 netns 与 veth 对（--ns-destroy 用）。
@@ -294,7 +340,7 @@ func WithNetNS(fd netns.NsHandle, fn func() error) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	orig, err := netns.Get()
+	orig, err := nsCurrent()
 	if err != nil {
 		return err
 	}
