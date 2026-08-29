@@ -102,10 +102,11 @@ int tc_ingress(struct __sk_buff *skb)
         return TC_ACT_OK;
 
     if (tcph->dest == bpf_htons(FAKE_PORT)) {
-        __be16 real = bpf_htons(REAL_PORT);
+        __be32 real = bpf_htons(REAL_PORT);  // 新旧端口都零扩展到 4 字节局部变量
+        __be32 old_port = tcph->dest;        // 旧值拷出来，不能直接拿包内指针算
 
         // ★ 手术三步：算差值 → 写新值 → 修校验和
-        __wsum diff = bpf_csum_diff(&tcph->dest, 2, &real, 2, 0);
+        __wsum diff = bpf_csum_diff(&old_port, 4, &real, 4, 0);
         bpf_skb_store_bytes(skb, (long)((void *)tcph - data)
                                  + offsetof(struct tcphdr, dest),
                             &real, 2, 0);
@@ -142,8 +143,13 @@ helper 家族比 XDP 富裕得多——`bpf_skb_store_bytes`（改包）、
    的 update flag 按内核约定照此传递，ruport 与内核 samples 同款写法）
 ```
 
-改的是 2 字节端口，但 `bpf_csum_diff` 传 4 字节宽（值等同）——
-反码和下低 16 位等价，这是内核示例约定俗成的写法。
+改的是 2 字节端口，`bpf_csum_diff` 的 size 惯例传 4：**新旧端口都要
+先零扩展到 4 字节局部变量**（高位补 0 不影响反码和）。致命细节：
+from 侧不能直接传包内指针 `&tcph->dest` 再给 4——读到的 4 字节是
+「目的端口 + 紧随其后的序列号高 16 位」，序列号被白白卷进增量，
+而 `bpf_skb_store_bytes` 只改 2 字节，校验和就此错一个非零值，
+包被对端静默丢弃、连接永远握手不成。ruport 原版（ruport.tc.c）
+正是踩了这个坑，ruport-go 已于 2026-08-29 随修复改为零扩展写法。
 
 **④ IP 头校验和不用管**：我们没改 IP 头任何字段。
 
@@ -241,8 +247,9 @@ int tc_egress(struct __sk_buff *skb)
 {
     // ……（同款边界检查，略）
     if (tcph->source == bpf_htons(REAL_PORT)) {
-        __be16 fake = bpf_htons(FAKE_PORT);
-        __wsum diff = bpf_csum_diff(&tcph->source, 2, &fake, 2, 0);
+        __be32 fake = bpf_htons(FAKE_PORT);
+        __be32 old_port = tcph->source;
+        __wsum diff = bpf_csum_diff(&old_port, 4, &fake, 4, 0);
         bpf_skb_store_bytes(skb, off + offsetof(struct tcphdr, source),
                             &fake, 2, 0);
         bpf_l4_csum_replace(skb, off + offsetof(struct tcphdr, check),
