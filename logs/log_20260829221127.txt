@@ -1,0 +1,35 @@
+log_20260829221127
+
+【确认事项】netns 模式演进为"敲门动态控制"（用户确认，含决策④：删路由不杀服务）
+
+【用户需求复述】
+ruport 启动时不做模式决定：先以普通（01）路由连接确认情况，断开后通过
+敲门切换 netns 隐藏模式（携带服务命令），再连接；后续还可能对不同服务用
+不同模式，全程不重启 ruport。
+
+【实施内容（三个提交）】
+bc80cc5：bpf/common.h Router 增加 nativeip（0=普通路由）与 hostip 字段
+   （10B→18B，纯 map 内部结构，协议帧不变）；ruport_tc.bpf.c 的
+   ingress/egress 改按表项分支（nativeip!=0 时 DNAT/SNAT IP+端口），
+   删除全局 config_map 与 get_config；Makefile 撤销 -type Config。
+55c27d9：internal/control 新增 ins=0x05 处理：ensureNetns 懒初始化（幂等）、
+   ensureService 同命令去重拉起（StartInNS）、hostIPv4 缓存解析、表项
+   nativeip/hostip 填充、Shutdown 统一回收服务；control.New 改为
+   Config{Ifindex/NetnsName/NetnsSubnet/NetnsPrewarm}。cmd/ruport：
+   去除 config_map 注入与 ifaceIPv4、ctl 传入配置、退出时 ctl.Shutdown()，
+   -N/--exec 降级为预热语义。cmd/c3：新增 -5 快捷方式（ins=0x05）、
+   帮助与示例更新、路由类指令（01/05）统一要求 -y。
+本次：README（c3 用法块同步 -5 与示例6、netns 章节改写为敲门动态模式）、
+   设计文档第 8 节（演进记录）。
+
+【影响评估】
+- 01 指令路径行为与原先完全一致（表项 nativeip=0 走原分支）；
+- 05 指令为新增：懒建 ns/服务、按表项生效，不同 源ip:port 可混合模式；
+- 删除路由不杀服务（可复用）；服务在 ruport 退出/--ns-destroy 回收；
+- 旧 C 版 ruport 收到 05 忽略（switch 无此分支），无副作用；
+- 需 Linux make 重新生成绑定后部署（Router 结构变了）。
+
+【验证】
+Windows 侧 GOOS=linux 交叉编译通过（临时桩含新 TcRouter 字段，已删）。
+Linux 验收步骤见 README netns 章节（普通连 → -d 删除 → 05 隐藏连 →
+宿主 netstat 无痕验证）。
