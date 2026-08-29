@@ -1,6 +1,6 @@
 # 设计文档 01：netns 隐藏服务架构（宿主侧连接隐藏）
 
-> 状态：设计稿（待逐项确认后实施）
+> 状态：已实施（S1~S3 代码落地，S4 本文档更新；Linux 侧编译与验收待执行）
 > 范围：仅 ruport-go；原 C 项目不改动
 > 前置结论来源：2026-08-29 端口复用排障（校验和三连修、TC 挂载自愈），
 > 详见 logs/log_20260829130340/144754/173029 系列
@@ -106,12 +106,14 @@ tcp  0 0 172.16.17.33:22  172.16.76.86:3333  ESTABLISHED   ← 暴露点
 ### 3.3 BPF 程序改造（bpf/ruport_tc.bpf.c）
 
 - **协议零改动**：Message/Router 结构、敲门格式、c3 命令全部不变；
-  netns 服务地址不走敲门下发，改为**加载时注入**：
+  netns 服务地址不走敲门下发，改为**运行时注入 config_map**（实施时
+  对设计稿的调整：原计划用 `RewriteConstants` 重写 .rodata 常量，但
+  bpf2go 生成的加载器不暴露 spec 层入口；改用 ARRAY 型 config_map
+  （key 恒 0，value = {nativeip, hostip}），加载后 `Put` 注入即可，
+  语义等价且与生成代码流完全兼容）：
   ```c
-  volatile const __be32 NATIVE_IP = 0;   // ns 服务地址，如 10.0.0.2
-  volatile const __be32 HOST_IP   = 0;   // 宿主对外地址，如 172.16.17.33
+  struct Config { __be32 nativeip; __be32 hostip; };   // common.h
   ```
-  Go 侧用 cilium/ebpf 的常量重写（`spec.RewriteConstants`）注入。
 - tc_ingress（命中注册客户端时）：
   - 现状：仅 dst 端口→nativeport；
   - 新增：`NATIVE_IP != 0` 时 dst IP→NATIVE_IP（`bpf_skb_store_bytes` 4B
@@ -185,8 +187,22 @@ HOST_IP 取所选网卡的第一个 IPv4 地址。
 - ps / auth.log 痕迹仍在（非目标，见 1.3）；
 - veth 关闭卸载对 ns 内流量吞吐有轻微影响（单连接 ssh 场景可忽略）。
 
-## 6. 待确认决策点
+## 6. 决策点（已确认 2026-08-29）
 
-1. 退出策略默认"保留 netns 与服务"是否符合预期（还是默认销毁）？
-2. FORWARD 链如遇 DROP：文档说明自行放行，还是 ruport 检测并提示？
-3. 服务生命周期默认绑定（ruport 退出即 SIGTERM 服务）是否接受？
+1. **退出策略**：默认保留 netns 与服务（named netns 持久，机器重启后
+   自动消失、启动幂等重建）；`--ns-destroy` 手动彻底销毁。
+2. **FORWARD 链**：只检测提示（启动时打印 hint），不自动改防火墙。
+3. **服务生命周期**：默认绑定 ruport（退出即 SIGTERM 服务）；
+   `--exec-detach` 可选分离。
+
+## 7. 实施记录
+
+| 步骤 | 提交 | 内容 |
+|---|---|---|
+| S1 | 0d9b9f1 | common.h Config 结构；TC config_map + ingress DNAT/egress 双模式；Makefile `-type Config` |
+| S2 | 1bfa5f1 | internal/netnsx：named netns 创建（ip netns add 同款 bind mount 配方）、veth/地址/路由、ETHTOOL_SFEATURES ioctl 关闭 veth TX 卸载（纯 Go，无外部命令） |
+| S3 | 351fd10 | cmd/ruport：-N/--ns-name/--ns-subnet/--exec/--exec-detach/--ns-destroy 参数、config_map 注入、服务生命周期、FORWARD 提示 |
+| S4 | 本次 | 本文档状态更新与 config_map 实施说明、README 用法、书稿 16.5 延伸阅读 |
+
+注：S1 的 BPF 改动与 Makefile 的 `-type Config` 需要 Linux 上 `make`
+重新生成绑定后才能编译通过（internal/bpf 生成物不入库）。

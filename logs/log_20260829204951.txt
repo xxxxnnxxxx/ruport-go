@@ -1,0 +1,44 @@
+log_20260829204951
+
+【确认事项】实施 netns 隐藏服务架构（设计文档 doc/design/01，S1-S4 全部完成）
+
+【用户确认记录】
+2026-08-29：用户认可方案②（netns 隔离 + L3/L4 NAT），确认范围"仅 ruport-go"、
+"单程序交付（无外部脚本）"、"先出设计文档"；三个决策点按建议确认：
+退出默认保留 / FORWARD 链只检测提示 / 服务生命周期默认绑定 ruport。
+
+【实施内容（逐步提交）】
+S1 0d9b9f1：bpf/common.h 新增 Config 结构；bpf/ruport_tc.bpf.c 新增
+   config_map（ARRAY，key 0）与 get_config()；tc_ingress 在传统端口改写
+   后按配置追加 DNAT（dst IP→nativeip + l3_csum_replace）；tc_egress 双
+   分支（netns 模式：sourceIp==nativeip 时全量 SNAT 含 IP+端口与 L3/L4
+   增量修正；传统模式：仅端口改写不碰校验和，行为与上一版一致）；
+   Makefile bpf2go 增加 -type Config。
+S2 1bfa5f1：internal/netnsx 包：named netns 创建（unshare + bind mount，
+   ip netns add 同款配方，兼容 vishvananda/netns v0.0.5 API）、veth 对
+   创建/移入 ns、网关(.1)/服务(.2)地址与默认路由、ethtool ioctl
+   （GSSET_INFO/GSTRINGS/SFEATURES）按名关闭 veth 两端 tx-checksumming、
+   ip_forward 打开、WithNetNS/StartInNS（setns + exec）；go.mod 提升
+   vishvananda/netns 为直接依赖。
+S3 351fd10：cmd/ruport 集成：-N/--ns-name/--ns-subnet/--exec/--exec-detach/
+   --ns-destroy 参数；Ensure + 服务拉起 + FORWARD 提示；config_map 注入
+   （nativeip/hostip 网络序原始值）；退出时对绑定服务发 SIGTERM 后按原
+   顺序清理 TC/XDP/对象；ifaceIPv4 取宿主地址。
+S4 本次：设计文档状态更新（已实施 + config_map 实施说明替代
+   RewriteConstants 方案 + 实施记录表）；README 新增 netns 隐藏模式章节；
+   书稿 16.5 延伸阅读。
+
+【验证】
+Windows 侧已做 GOOS=linux 交叉编译验证（临时桩模拟 bpf2go 生成 API 含
+TcConfig/ConfigMap，验证后删除未入库）：cmd/ruport、cmd/c3、
+internal/control、internal/netnsx 均编译通过。
+Linux 侧待用户执行：make（重新生成绑定，-type Config 生效）→ 部署 →
+按 README netns 章节验收（宿主 netstat 无痕 / ns 内可见 / ssh 通 /
+不带 -N 回退验证）。
+
+【影响评估】
+- 传统模式（不带 -N）行为不变：BPF egress 传统分支与上一版逐行等价，
+  config_map 未注入即走原逻辑；
+- netns 模式新增：netns/veth/ip_forward/服务子进程为新增系统状态，
+  --ns-destroy 可完整回收；veth TX 卸载关闭仅影响 ns 内流量；
+- 协议（敲门/c3/Router）零改动。
