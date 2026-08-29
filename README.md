@@ -135,7 +135,10 @@ sudo bpftool feature probe full | grep -E "xdp|clsact"   # 权限与能力最终
 - 需 **root**（或 `CAP_BPF` + `CAP_NET_ADMIN`，5.8+ 细分 capability）；
 - XDP 使用 **generic/SKB 模式**，不挑网卡驱动（native 模式非必需）；
 - 内核需启用 `CONFIG_BPF_SYSCALL`（Ubuntu 默认开启）；
-- 与原 C 版一致，本程序未使用任何高版本特性作为前提。
+- 与原 C 版一致，本程序未使用任何高版本特性作为前提；
+- **网卡 TX 校验和卸载必须保持开启（系统默认）**：egress 方向只改写回包源端口、
+  不修改 TCP 校验和（本机产生的包为 CHECKSUM_PARTIAL，由网卡对改写后的头部
+  求和）。若执行 `ethtool -K <网卡> tx off`，回包校验和会出错、连接无法建立。
 
 ## 运行
 

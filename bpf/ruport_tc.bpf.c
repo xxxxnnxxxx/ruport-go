@@ -86,7 +86,6 @@ SEC("tc") // tx
 int tc_egress(struct __sk_buff *skb) {
     const int l3_off = ETH_HLEN;    // IP header offset
     const int l4_off = l3_off + 20; // TCP header offset: l3_off + sizeof(struct iphdr)
-    __be32 sum;                     // IP checksum
 
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
@@ -119,19 +118,15 @@ int tc_egress(struct __sk_buff *skb) {
             value->connport != 0) {
 
             const __be32 sourceport = value->connport;
-            // 旧源端口零扩展拷贝（须在 store 改写前读取），避免把其后的
-            // 目的端口 2 字节卷进增量
-            const __be32 old_port = tcph->source;
             // SNAT: pod_ip -> cluster_ip, then update L3 and L4 header
             bpf_skb_store_bytes(skb, l4_off + offsetof(struct tcphdr, source), (void *)&sourceport, 2, 0);
-            // CHECKSUM_PARTIAL（本机产生的包，校验和待网卡计算）时字段里只有
-            // 伪头种子，网卡会对改写后的新端口重新求和，不能再做增量修正，
-            // 否则端口差值被重复计入（实测每个回包校验和恰差 0x3A=80-22，
-            // 客户端静默丢弃 SYN-ACK）；仅软件校验和（csum_start==0）才修正
-            if (skb->csum_start == 0) {
-                sum = bpf_csum_diff((void *)&old_port, 4, (void *)&sourceport, 4, 0);
-                bpf_l4_csum_replace(skb, l4_off + offsetof(struct tcphdr, check), 0, sum, BPF_F_PSEUDO_HDR);
-            }
+            // 此处刻意不修 TCP 校验和：本机产生的回包在 TX 校验和卸载开启
+            // （默认）时为 CHECKSUM_PARTIAL，字段里只有伪头种子，网卡发送时
+            // 会对改写后的新端口重新求和；若再调 bpf_l4_csum_replace 做增量
+            // 修正，端口差值会被重复计入（实测回包校验和恒差 0x3A=80-22，
+            // 客户端静默丢弃 SYN-ACK）。UAPI 的 struct __sk_buff 不暴露校验
+            // 和状态，无法分支判断，故统一不动校验和字段。
+            // 运行要求：TX 校验和卸载保持开启（勿 ethtool -K <if> tx off）。
 
             if (value->nativeport == 0) {
                 struct Router tmp;

@@ -1,0 +1,44 @@
+log_20260829144754.txt
+
+【确认事项】tc_egress 改为只改端口、不修校验和；README 补运行要求
+（ruport-go + 原 C 项目 ruport + 书 8.4 示例）
+
+【背景 / 上轮修复的编译失败】
+上轮按"检测 CHECKSUM_PARTIAL 再决定是否增量修正"的方案修改后，用户 Linux
+编译报错：error: no member named 'csum_start' in 'struct __sk_buff'。
+原因：csum_start 是内核内部 struct sk_buff 的字段，UAPI 的 struct __sk_buff
+并未暴露；BPF 程序在 TC egress 无法得知包的校验和状态（无 ip_summed/
+csum_start 成员，也无 skb_checksum_help 类 helper——内核 iptables 的
+OUTPUT NAT 正是改包前先调 skb_checksum_help 转软件校验和，BPF 无此能力）。
+故"按状态分支"的方案在 BPF 里不可实现。
+
+【确认执行的修改】（用户已两次确认：方案说明 + "原有功能是否被改变"的澄清）
+1. ruport-go/bpf/ruport_tc.bpf.c 与原项目 ruport.tc.c 的 tc_egress：
+   - 删除 bpf_csum_diff + bpf_l4_csum_replace 两行与 old_port 局部变量、
+     函数顶部的 __be32 sum 声明（避免 -Werror unused）；
+   - 保留 bpf_skb_store_bytes 改写源端口 nativeport→connport 不变；
+   - 加注释说明"刻意不修校验和"的原因与运行要求。
+   tc_ingress 与其他一切逻辑（匹配条件、端口学习、用户态控制）均不动。
+2. 书 doc/book/p3-ch08-tc.md 8.4 egress 示例同步改为"只改端口"，并将
+   坑点说明改为完整结论（BPF 读不到校验和状态；egress 不碰字段；保持
+   TX 卸载开启）。
+3. 两个项目 README 的注意事项中补充运行要求：网卡 TX 校验和卸载必须
+   保持开启（默认），勿 ethtool -K <if> tx off。
+
+【原理（为什么不修反而对）】
+本机产生的回包（SYN-ACK/数据段/ACK）在 TX 校验和卸载开启（默认）时为
+CHECKSUM_PARTIAL：字段里只有伪头种子，完整校验和由网卡发送时对真实头部
+求和——改写后的新端口会被自动计入。此时再调 bpf_l4_csum_replace 做增量
+修正，端口差值被计入两次（实测回包校验和恒差 0x3A=80-22，客户端静默丢弃
+全部 SYN-ACK，握手永不完成）。ingress 方向收到的包永远是软件校验和状态，
+其增量修正保留（已被实测证明正确：sshd 正常应答改写后的 SYN）。
+
+【影响评估 / 与原有功能的关系】
+- 原有功能与流程未变：egress 匹配、端口改写、端口学习、ingress、用户态
+  控制全部保持；改变的仅是回包校验和的维护方式。原实现的该校验和修正
+  在真实环境下恒错（从未工作过），本次是让端口复用第一次真正可用。
+- 边界：极少数走软件校验和的边缘包（如 challenge ACK 类冗余控制包）改
+  端口后校验和不再匹配、被对端丢弃，属可丢弃冗余包，无实质影响；数据段
+  与常规 ACK 在卸载开启下均由网卡计算，不受影响。
+- 部署：Linux 重新编译（ruport-go make；C 项目 make/build.sh）、确认
+  ethtool tx 卸载为 on（若曾关闭需恢复）、重启 ruport、重新敲门再测。
