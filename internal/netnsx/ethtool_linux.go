@@ -5,6 +5,9 @@ package netnsx
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
+	"os/exec"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -27,7 +30,26 @@ type ifreq struct {
 
 // DisableTxChecksum 关闭指定网卡的 tx-checksumming 特性。
 // 必须在目标网卡所在的命名空间内调用（ioctl 按套接字的 netns 解析网卡名）。
+// 优先走 ioctl（零外部依赖）；失败时回退到系统 ethtool 命令。
 func DisableTxChecksum(ifname string) error {
+	if err := disableTxChecksumIoctl(ifname); err != nil {
+		log.Printf("netnsx: ethtool ioctl failed on %s (%v), fallback to ethtool command", ifname, err)
+		return disableTxChecksumCmd(ifname)
+	}
+	return nil
+}
+
+// disableTxChecksumCmd 回退路径：ethtool -K <if> tx off。
+// 子进程继承当前线程的命名空间，ns 侧调用同样适用。
+func disableTxChecksumCmd(ifname string) error {
+	out, err := exec.Command("ethtool", "-K", ifname, "tx", "off").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ethtool -K %s tx off: %v: %s", ifname, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func disableTxChecksumIoctl(ifname string) error {
 	s, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
 	if err != nil {
 		return err
@@ -80,6 +102,7 @@ func featureIndex(s int, ifname, want string) (int, error) {
 		return 0, fmt.Errorf("ETHTOOL_GSTRINGS: %w", err)
 	}
 	names := buf[12:]
+	first := ""
 	for i := 0; i < count; i++ {
 		b := names[i*ethGStringLen : (i+1)*ethGStringLen]
 		end := 0
@@ -89,8 +112,13 @@ func featureIndex(s int, ifname, want string) (int, error) {
 		if string(b[:end]) == want {
 			return i, nil
 		}
+		if i == 0 {
+			first = string(b[:end])
+		}
 	}
-	return 0, fmt.Errorf("feature %q not found on %s", want, ifname)
+	// 附带诊断信息：实际拿到的条目数与首条名，便于定位 ioctl 路径问题
+	return 0, fmt.Errorf("feature %q not found on %s (count=%d, first=%q)",
+		want, ifname, count, first)
 }
 
 func ioctlEthtool(s int, ifname string, data unsafe.Pointer) error {
