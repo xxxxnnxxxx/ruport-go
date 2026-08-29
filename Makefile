@@ -31,7 +31,7 @@ generate: tidy
 		-go-package bpf -type Message Xdp ../../bpf/ruport_xdp.bpf.c
 	cd internal/bpf && $(GO) run github.com/cilium/ebpf/cmd/bpf2go \
 		-cc $(CLANG) -cflags "$(BPF_CFLAGS) $(CLANG_BPF_SYS_INCLUDES)" \
-		-go-package bpf -type Router Tc ../../bpf/ruport_tc.bpf.c
+		-go-package bpf -type Router -type Config Tc ../../bpf/ruport_tc.bpf.c
 
 build: generate
 	$(GO) build -o ruport ./cmd/ruport
