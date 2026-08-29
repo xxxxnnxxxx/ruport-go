@@ -231,3 +231,21 @@ HOST_IP 取所选网卡的第一个 IPv4 地址。
 
 实施提交：bc80cc5（BPF 按表项）、55c27d9（控制面/c3/main 集成）、
 本次（文档与日志）。
+
+## 9. 演进二：清场语义（2026-08-29 三次确认后实施）
+
+用户修正生命周期要求（推翻第 6 节决策 1/4 的"保留"语义）：
+
+1. **ruport 退出即完整清场**：SIGTERM ns 内全部服务 → 拆除 veth/netns →
+   恢复 Ensure 之前的 ip_forward（NS.OldForward 记录）。
+2. **`-d` 删除路由触发条件清场**：删表项后扫描 router_map，若已无其他
+   netns 表项（nativeip != 0，即不影响其他 源ip:port 的隐藏连接），
+   同样完整清场；下一条 05 指令自动重建。
+3. `--ns-destroy` 保留，仅用于异常残留处置（如 kill -9 后）；
+   `--exec-detach` 的分离服务在清场后残留为无网络进程。
+
+依据：TC filter 随 ruport 退出卸载、表项随进程消失，连接本来就会断——
+"保留 ns"仅省服务重启的几百毫秒，清场语义基本无损失且状态更干净。
+
+实施提交：05194dc（netnsx 恢复 ip_forward + NS.Destroy；control 清场
+与删除扫描；main 帮助文本）。

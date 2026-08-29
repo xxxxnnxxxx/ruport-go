@@ -302,13 +302,18 @@ ssh -o "ProxyCommand=nc -p 3333 %h %p" user@<服务器IP> -p 80
 # 验证：宿主 netstat -an | grep 3333 与 ss -tn | grep :22 均为空；
 # ns 内可见真实四元组：sudo ip netns exec ruport_ns ss -tn
 
-# 彻底清理（可选；删路由/-d 不杀 ns 内服务，服务可复用秒连）
-sudo ./ruport -ns-destroy
+# 结束：-d 删除最后一条 netns 路由后自动清场（停服务、拆 ns、恢复 ip_forward）；
+# ruport 退出（Ctrl+C）同样自动清场；--ns-destroy 仅用于异常残留（如 kill -9 后）
 ```
 
 服务命令（`-e`）按空格切分、不走 shell，须前台运行（如 sshd 的 `-D`）；
 同命令字符串去重复用，不会重复起进程；`-e` 可省略（前提 ns 内已有服务
 在跑，比如先用一次 05 拉起、后续只敲门路由）。
+
+**生命周期（清场语义）**：`-d` 删除某条 netns 路由后，若表中已无其他
+netns 表项（其他 源ip:port 的隐藏连接不受影响），自动停止 ns 内服务、
+拆除 veth/netns 并恢复 `ip_forward`；ruport 退出时同样完整清场；
+下一条 05 指令会自动重建（幂等，服务重拉约几百毫秒）。
 
 启动参数（均可选，仅作预热）：`-N` 启动即建 ns（否则首条 05 指令时懒建）；
 `--exec` 预拉默认服务；`--ns-name`（默认 ruport_ns）；`--ns-subnet`（默认

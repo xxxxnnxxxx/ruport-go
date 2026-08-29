@@ -1,0 +1,32 @@
+log_20260829231623
+
+【确认事项】netns 生命周期改为清场语义（用户确认，推翻此前"退出保留/-d不杀服务"决策）
+
+【用户需求复述】
+ruport 退出应当直接清场（停服务、拆 ns、恢复系统状态），不应再执行一遍
+--ns-destroy；-d 删除路由时也应删除 ns。
+
+【实施内容】
+05194dc：
+- internal/netnsx：NS 记录 OldForward（Ensure 前 ip_forward 值，-1 未知）；
+  新增 NS.Destroy()（拆 veth/netns 挂载 + OldForward==0 时恢复 ip_forward，
+  不负责杀进程）；Ensure 相应记录旧值。
+- internal/control：Shutdown 扩展为完整清场 teardownNetns（先 SIGTERM 全部
+  服务再拆 ns，重置懒初始化状态使下一条 05 可重建）；HandleRouter 删除
+  路径成功后扫描 router_map，若已无 nativeip!=0 表项则同样清场（不影响
+  其他 源ip:port 的隐藏连接）。
+- cmd/ruport：--ns-destroy 帮助文本改为"异常残留处置用；正常退出即自动清场"。
+本次：README netns 章节生命周期改写、设计文档第 9 节（演进二）。
+
+【影响评估】
+- 语义变化：退出/删最后一条 netns 路由 → 服务停、veth/netns 拆除、
+  ip_forward 还原；正在进行的隐藏连接随清场断开（与 TC 卸载后的行为
+  一致，无额外损失）；重建为幂等 Ensure + 服务重拉（几百毫秒）。
+- --exec-detach 分离服务清场后残留为无网络进程（已知边界）；
+- kill -9 等异常退出仍可能残留，--ns-destroy 为处置手段；
+- 01 普通路由不受影响（无 ns 状态）。
+
+【验证】
+Windows 侧 GOOS=linux 交叉编译通过（临时桩，已删）。
+Linux 验收：05 连接 → -d 删除 → 观察 ruport 日志 "netns cleaned up" 与
+ip netns 列表清空、veth 消失、ip_forward 恢复；Ctrl+C 退出同样清场。
