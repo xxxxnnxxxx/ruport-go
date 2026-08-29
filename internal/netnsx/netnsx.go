@@ -62,10 +62,15 @@ var subnetFallbacks = []string{
 }
 
 // subnetInUse 返回 subnet 与宿主现有地址/路由的重叠点描述；空串表示无冲突。
-// 只做双方网段基址的互相包含判断，足以覆盖常见冲突形态。
-func subnetInUse(subnet *net.IPNet) string {
+// selfLink/selfIdx 为自身 veth 的名字与 ifindex，其地址与路由不计入冲突
+// （Ensure 幂等重入时它们已存在）。默认路由 0.0.0.0/0 在数学上包含一切
+// 网段，不能做包含判断——只有其网关落在候选网段内才算冲突。
+func subnetInUse(subnet *net.IPNet, selfLink string, selfIdx int) string {
 	if links, err := netlink.LinkList(); err == nil {
 		for _, l := range links {
+			if l.Attrs().Name == selfLink {
+				continue
+			}
 			addrs, err := netlink.AddrList(l, netlink.FAMILY_V4)
 			if err != nil {
 				continue
@@ -79,7 +84,10 @@ func subnetInUse(subnet *net.IPNet) string {
 	}
 	if routes, err := netlink.RouteList(nil, netlink.FAMILY_V4); err == nil {
 		for _, r := range routes {
-			if r.Dst == nil { // 默认路由：网关落在候选网段内同样致命
+			if r.LinkIndex == selfIdx {
+				continue
+			}
+			if r.Dst == nil || r.Dst.String() == "0.0.0.0/0" { // 默认路由
 				if r.Gw != nil && subnet.Contains(r.Gw) {
 					return fmt.Sprintf("default gateway %s", r.Gw)
 				}
@@ -99,12 +107,20 @@ func subnetInUse(subnet *net.IPNet) string {
 // 重复调用安全（已存在则复用）。失败时调用方无需 Destroy（仅句柄需 Close）。
 func Ensure(name string, subnet *net.IPNet) (*NS, error) {
 	// 网段冲突检测与自动回退：重叠网段会把去往原网段的流量引进 veth
-	// 黑洞（实测 10.0.0.0/24 常与内网重叠，曾导致整机断网）
-	if c := subnetInUse(subnet); c != "" {
+	// 黑洞（实测 10.0.0.0/24 常与内网重叠，曾导致整机断网）。
+	// 自身 veth 的既有地址/路由不计入冲突（幂等重入）。
+	ns := &NS{Name: name}
+	ns.HostVeth, ns.NsVeth = vethNames(name)
+	selfIdx := 0
+	if l, err := netlink.LinkByName(ns.HostVeth); err == nil {
+		selfIdx = l.Attrs().Index
+	}
+	if c := subnetInUse(subnet, ns.HostVeth, selfIdx); c != "" {
 		fallback := ""
 		for _, cand := range subnetFallbacks {
 			_, n, err := net.ParseCIDR(cand)
-			if err != nil || n.String() == subnet.String() || subnetInUse(n) != "" {
+			if err != nil || n.String() == subnet.String() ||
+				subnetInUse(n, ns.HostVeth, selfIdx) != "" {
 				continue
 			}
 			fallback = n.String()
@@ -116,9 +132,7 @@ func Ensure(name string, subnet *net.IPNet) (*NS, error) {
 		}
 		log.Printf("netnsx: subnet conflicts with host (%s), fallback to %s", c, fallback)
 	}
-
-	ns := &NS{Name: name, IPNet: subnet}
-	ns.HostVeth, ns.NsVeth = vethNames(name)
+	ns.IPNet = subnet
 
 	// 1) named netns：已存在则复用，否则按 ip netns add 的配方创建
 	// （unshare + 将 /proc/self/ns/net 绑定挂载到 /var/run/netns/<name>，
