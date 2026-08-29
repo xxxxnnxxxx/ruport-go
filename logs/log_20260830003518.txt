@@ -1,0 +1,27 @@
+log_20260830003518
+
+【事项】禁用 netns 隐藏功能（用户决定：局限性与风险偏大，代码保留、功能停用）
+
+【背景与理由】
+netns 模式实测中的限制：宿主转发依赖 iptables FORWARD 链放行（用户宿主
+装有 Docker，FORWARD 默认 DROP，转发进 ns 的包被丢）；功能引入的系统
+状态面较大（netns/veth/ip_forward/路由/ethtool 特性）。用户权衡后决定
+暂时禁用，保留代码以备后用。
+
+【实施内容】
+- internal/control：新增 const NetnsDisabled = true；HandleRouter 的
+  case 0x05 在禁用时记录 "netns route ignored: feature disabled" 并返回
+  （不建 ns、不拉服务、不插表项）。恢复启用只需置 false 重编译。
+- cmd/ruport：-N/--exec/--exec-detach 参数标记"已禁用"并在给出时打印
+  提示后忽略；--ns-destroy 保持可用（清理历史残留）。
+- cmd/c3：-5 帮助文本标注"服务器端已禁用，指令将被忽略并记录日志"
+  （协议不变，旧/新版本互发无副作用）。
+- README：c3 用法块同步 -5 文案；netns 章节加"已禁用，代码保留"横幅
+  （含恢复方法与残留清理说明），正文保留作设计参考。
+- doc/design/01：状态更新并记录禁用决定与恢复方法（第 10 节语义并入
+  状态头）。
+
+【影响评估】
+- 传统模式（01 路由/反弹/shell）行为完全不变；BPF 的 netns 分支保留但
+  因不再有 nativeip!=0 的表项而永不触发；净nsx 包保留编译。
+- 05 指令变为显式拒绝（有日志），不会产生任何系统状态。

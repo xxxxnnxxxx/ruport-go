@@ -29,6 +29,12 @@ type procKey struct {
 	cport uint16
 }
 
+// NetnsDisabled 禁用 netns 隐藏路由功能（ins=0x05，代码保留、功能停用）。
+// 原因：宿主转发依赖 iptables FORWARD 放行（Docker 等环境默认 DROP）、
+// 引入的系统状态面较大（netns/veth/ip_forward/路由），局限与风险偏高。
+// 置为 false 可恢复启用（届时注意 FORWARD 链放行，见 doc/design/01）。
+const NetnsDisabled = true
+
 // Controller 保存功能子进程信息，等价于原项目的 FunctionNode 链表。
 type Controller struct {
 	cfg Config
@@ -130,6 +136,10 @@ func (c *Controller) HandleRouter(msg *bpf.XdpMessage, routerMap *ebpf.Map) {
 		c.insertRouter(routerMap, key, msg, 0, 0)
 	case 0x05:
 		// netns 隐藏路由：懒初始化 ns 与服务，表项携带 ns 地址（nativeip/hostip）
+		if NetnsDisabled {
+			log.Print("netns route ignored: feature disabled")
+			return
+		}
 		if msg.Nativeport == 0 {
 			log.Print("the nativeport is needed.")
 			return
