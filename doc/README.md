@@ -4,6 +4,10 @@
 ——《eBPF 从入门到精通》（序言 + 六篇 17 章 + 附录 A-G，
 含写作契约 [OUTLINE.md](book/OUTLINE.md)）。
 
+架构设计文档：**[doc/design/](design/01-netns-hidden-service.md)**
+——[01 netns 隐藏服务架构](design/01-netns-hidden-service.md)
+（宿主侧连接隐藏的设计与实施计划）。
+
 > 本目录原有的 15 份专题文档（00~14）已按其素材全部重组进书中
 > （映射关系见契约文档末尾的素材映射表），并经确认删除；
 > 需要查阅历史版本时请使用 git 历史。
