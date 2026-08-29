@@ -223,7 +223,7 @@ func main() {
 	flag.StringVar(&nsSubnet, "ns-subnet", "10.0.0.0/24", "netns 隐藏模式：内网段（.1 网关 / .2 服务）")
 	flag.StringVar(&execCmd, "exec", "", "netns 隐藏模式：在命名空间内拉起的服务命令（空格切分，不走 shell）")
 	flag.BoolVar(&execDetach, "exec-detach", false, "服务不随 ruport 退出")
-	flag.BoolVar(&nsDestroy, "ns-destroy", false, "销毁 netns 与 veth 后退出")
+	flag.BoolVar(&nsDestroy, "ns-destroy", false, "销毁 netns 与 veth 后退出（异常残留处置用；正常退出即自动清场）")
 	flag.Parse()
 
 	// --ns-destroy：仅清理

@@ -31,6 +31,10 @@ type NS struct {
 	GatewayIP net.IP         // 宿主侧网关地址（网段内 .1）
 	ServiceIP net.IP         // ns 内服务地址（网段内 .2）
 	Fd        netns.NsHandle // 命名空间句柄
+
+	// OldForward 记录 Ensure 之前的 ip_forward 值（-1 未知），
+	// Destroy 清场时据此恢复
+	OldForward int
 }
 
 // vethNames 由 netns 名派生设备名（内核 IFNAMSIZ 限制 15 字符，
@@ -147,9 +151,13 @@ func Ensure(name string, subnet *net.IPNet) (*NS, error) {
 		return nil, fmt.Errorf("disable tx checksum on %s: %w", ns.NsVeth, err)
 	}
 
-	// 6) ip_forward：转发到 ns 依赖它；不自动还原（netns 持久存在）
-	if v, err := readIPForward(); err == nil && v == 0 {
-		_ = writeIPForward(1)
+	// 6) ip_forward：转发到 ns 依赖它；记录旧值，Destroy 清场时恢复
+	ns.OldForward = -1
+	if v, err := readIPForward(); err == nil {
+		ns.OldForward = v
+		if v == 0 {
+			_ = writeIPForward(1)
+		}
 	}
 	return ns, nil
 }
@@ -241,11 +249,36 @@ func StartInNS(fd netns.NsHandle, argv []string) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-// Close 释放命名空间句柄（不销毁 netns 本身，named netns 持续存在）。
+// Close 释放命名空间句柄（不销毁 netns 本身）。
 func (n *NS) Close() {
 	if n.Fd.IsOpen() {
 		n.Fd.Close()
 	}
+}
+
+// Destroy 清场：拆除 veth 对与命名空间，并恢复 Ensure 时改动的 ip_forward。
+// 不负责终止 ns 内的进程（由控制面先行处理）。
+func (n *NS) Destroy() error {
+	if n == nil {
+		return nil
+	}
+	n.Close()
+	if link, err := netlink.LinkByName(n.HostVeth); err == nil {
+		if err := netlink.LinkDel(link); err != nil {
+			return fmt.Errorf("del %s: %w", n.HostVeth, err)
+		}
+	}
+	path := "/var/run/netns/" + n.Name
+	if _, err := os.Stat(path); err == nil {
+		if err := unix.Unmount(path, 0); err != nil && !errors.Is(err, syscall.EINVAL) {
+			return fmt.Errorf("umount %s: %w", path, err)
+		}
+		os.Remove(path)
+	}
+	if n.OldForward == 0 {
+		_ = writeIPForward(0)
+	}
+	return nil
 }
 
 func readIPForward() (int, error) {

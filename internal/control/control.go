@@ -102,6 +102,10 @@ func (c *Controller) HandleRouter(msg *bpf.XdpMessage, routerMap *ebpf.Map) {
 	if hiByte > 0 { // 删除路由
 		if err := routerMap.LookupAndDelete(key, &router); err == nil {
 			log.Printf("delete a router: ip: %s, port: %d", ip2str(msg.Cip), toHostPort(router.Cport))
+			// 清场语义：删除后若已无其他 netns 路由表项，连同服务与 ns 一并清理
+			if !hasNetnsRoute(routerMap) {
+				c.teardownNetns()
+			}
 		}
 		return
 	}
@@ -229,17 +233,47 @@ func (c *Controller) ensureService(ns *netnsx.NS, cmdStr string) error {
 	return nil
 }
 
-// Shutdown 结束所有由敲门指令拉起的 ns 内服务。
-// 删除路由（-d）不影响服务（设计决策：可复用，秒连）；ruport 退出时统一回收。
+// Shutdown 完整清场：结束 ns 内所有服务、拆除 netns/veth、恢复 ip_forward。
+// ruport 退出时调用；删除最后一条 netns 路由表项后也会触发。
 func (c *Controller) Shutdown() {
+	c.teardownNetns()
+}
+
+// teardownNetns 先结束服务（它们持有 ns），再拆除网络设施并重置懒初始化状态，
+// 使下一条 05 指令可重新 Ensure。
+func (c *Controller) teardownNetns() {
 	c.svcMu.Lock()
-	defer c.svcMu.Unlock()
 	for cmdStr, p := range c.services {
 		if p.Process != nil {
 			_ = p.Process.Signal(syscall.SIGTERM)
 		}
 		delete(c.services, cmdStr)
 	}
+	c.svcMu.Unlock()
+
+	c.nsMu.Lock()
+	defer c.nsMu.Unlock()
+	if c.ns == nil {
+		return
+	}
+	if err := c.ns.Destroy(); err != nil {
+		log.Printf("destroy netns: %v", err)
+	}
+	c.ns = nil
+	log.Print("netns cleaned up")
+}
+
+// hasNetnsRoute 扫描路由表是否仍有 netns 表项（nativeip != 0）。
+func hasNetnsRoute(routerMap *ebpf.Map) bool {
+	var key uint64
+	var r bpf.TcRouter
+	iter := routerMap.Iterate()
+	for iter.Next(&key, &r) {
+		if r.Nativeip != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // HandleProcess 根据指令执行动作，等价于原 control_process()。
