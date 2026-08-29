@@ -248,16 +248,29 @@ int tc_egress(struct __sk_buff *skb)
     // ……（同款边界检查，略）
     if (tcph->source == bpf_htons(REAL_PORT)) {
         __be32 fake = bpf_htons(FAKE_PORT);
-        __be32 old_port = tcph->source;
-        __wsum diff = bpf_csum_diff(&old_port, 4, &fake, 4, 0);
+        __be32 old_port = tcph->source;   // 旧值在改写前拷出
         bpf_skb_store_bytes(skb, off + offsetof(struct tcphdr, source),
                             &fake, 2, 0);
-        bpf_l4_csum_replace(skb, off + offsetof(struct tcphdr, check),
-                            0, diff, BPF_F_PSEUDO_HDR);
+        // CHECKSUM_PARTIAL（校验和待网卡计算）时不能再做增量修正，见下文
+        if (skb->csum_start == 0) {
+            __wsum diff = bpf_csum_diff(&old_port, 4, &fake, 4, 0);
+            bpf_l4_csum_replace(skb, off + offsetof(struct tcphdr, check),
+                                0, diff, BPF_F_PSEUDO_HDR);
+        }
     }
     return TC_ACT_OK;
 }
 ```
+
+**egress 独有的大坑——CHECKSUM_PARTIAL**：本机产生的包（SYN-ACK、
+服务回包）在校验和卸载开启时，走到 TC egress 的字段里只有伪头"种子"，
+完整校验和由网卡发送时从 `csum_start` 起对真实头部求和——改写后的新
+端口会被自动算进去。此时再调 `bpf_l4_csum_replace` 做增量修正，端口
+差值就被**计入了两次**：ruport 实测每个回包校验和恒偏 0x3A（= 80 − 22，
+正是端口差），客户端静默丢弃所有 SYN-ACK，握手永远完不成。判据：
+`skb->csum_start != 0` 即待网卡计算，跳过修正；`== 0`（软件已算好）
+才做增量。ingress 方向收到的包没有 PARTIAL 状态，不受此影响（ruport
+的 SYN 改写方向已实测正确）。
 
 两个方向合成一张图——**这就是端口复用的全部原理**：
 

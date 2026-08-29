@@ -119,13 +119,19 @@ int tc_egress(struct __sk_buff *skb) {
             value->connport != 0) {
 
             const __be32 sourceport = value->connport;
-            // 同 ingress：旧源端口零扩展拷贝，避免把其后的目的端口 2 字节
-            // 卷进增量校验和
+            // 旧源端口零扩展拷贝（须在 store 改写前读取），避免把其后的
+            // 目的端口 2 字节卷进增量
             const __be32 old_port = tcph->source;
             // SNAT: pod_ip -> cluster_ip, then update L3 and L4 header
-            sum = bpf_csum_diff((void *)&old_port, 4, (void *)&sourceport, 4, 0);
             bpf_skb_store_bytes(skb, l4_off + offsetof(struct tcphdr, source), (void *)&sourceport, 2, 0);
-            bpf_l4_csum_replace(skb, l4_off + offsetof(struct tcphdr, check), 0, sum, BPF_F_PSEUDO_HDR);
+            // CHECKSUM_PARTIAL（本机产生的包，校验和待网卡计算）时字段里只有
+            // 伪头种子，网卡会对改写后的新端口重新求和，不能再做增量修正，
+            // 否则端口差值被重复计入（实测每个回包校验和恰差 0x3A=80-22，
+            // 客户端静默丢弃 SYN-ACK）；仅软件校验和（csum_start==0）才修正
+            if (skb->csum_start == 0) {
+                sum = bpf_csum_diff((void *)&old_port, 4, (void *)&sourceport, 4, 0);
+                bpf_l4_csum_replace(skb, l4_off + offsetof(struct tcphdr, check), 0, sum, BPF_F_PSEUDO_HDR);
+            }
 
             if (value->nativeport == 0) {
                 struct Router tmp;

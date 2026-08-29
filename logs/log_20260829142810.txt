@@ -1,0 +1,39 @@
+log_20260829142810.txt
+
+【确认事项】修复 tc_egress 增量校验和在 CHECKSUM_PARTIAL 包上的重复计数错误
+（ruport-go + 原 C 项目 ruport + 书 8.4 示例）
+
+【背景 / 证据链】
+1. 前序修复（log_20260829130340）后，服务器端 tcpdump 显示：SYN 已被 ingress
+   改写到 22 且 sshd 应答（ingress 方向修复有效），SYN-ACK 源端口已被 egress
+   改回 80（改写本身有效），但客户端持续重传 SYN、从不发 ACK——客户端静默
+   丢弃所有 SYN-ACK。
+2. 客户端 tcpdump -vvv 实锤：服务器来的每个 SYN-ACK 均
+   "cksum 0xXXXX (incorrect -> 0xYYYY)"，且偏差值全部恒为 0x3A = 58 =
+   80 − 22 = connport − nativeport，恰为源端口改写差值。
+3. 机制：SYN-ACK 等本机产生的包带校验和卸载（CHECKSUM_PARTIAL），走到
+   TC egress 时校验和字段里只有伪头"种子"，完整校验和由网卡发送时从
+   csum_start 起对真实头部字节求和（改写后的新端口会被正确计入）。
+   bpf_l4_csum_replace 再对字段做增量修正，端口差值被计入两次，最终校验和
+   恒偏 0x3A，客户端全部丢弃。旁证：抓包中一条软件已算好校验和的重传 ACK
+   （非 PARTIAL）走同一套增量代码结果为 (correct)，说明增量代码本身正确，
+   错在未区分包的校验和状态。
+4. 实测 ethtool -K ens33 tx off 无效（用户验证），不能依赖环境开关解决。
+
+【确认执行的修改】（用户已回复"确认"）
+1. ruport-go/bpf/ruport_tc.bpf.c 与原项目 ruport.tc.c 的 tc_egress：
+   bpf_skb_store_bytes 改写源端口保持不变；bpf_csum_diff +
+   bpf_l4_csum_replace 两行用 if (skb->csum_start == 0) 包裹——
+   csum_start != 0 即 CHECKSUM_PARTIAL（校验和待网卡计算），跳过字段修正；
+   == 0（软件已算好）才做增量修正。旧端口仍在 store 之前读取（零扩展拷贝）。
+   tc_ingress 不动（收到的包没有 PARTIAL 状态，实战已证明正确）。
+2. 书 doc/book/p3-ch08-tc.md 8.4 egress 教学示例同步加 csum_start 判断，
+   并补充"egress 独有的 CHECKSUM_PARTIAL 坑"说明段。
+
+【影响评估】
+- 仅影响 egress 方向校验和修正的条件判断，端口改写、匹配条件、端口学习、
+  ingress 方向全部保持不变，不改变任何原有流程与布局。
+- 两类包状态均正确：PARTIAL 时由网卡/协议栈对改后头部求和；软件校验和时
+  走增量修正（该路径已被实测 (correct) 的 ACK 验证）。
+- 需在 Linux 重新编译部署：ruport-go 执行 make（自动重编生成）；原 C 项目
+  make/build.sh。部署后重启 ruport、重新敲门再测。
