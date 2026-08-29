@@ -22,20 +22,6 @@ struct {
   __uint(max_entries, MAX_MAP_ENTRIES);
 } router_map SEC(".maps");
 
-// netns 模式全局配置：nativeip==0（或查不到）即传统模式
-struct {
-  __uint(type, BPF_MAP_TYPE_ARRAY);
-  __type(key, __u32);
-  __type(value, struct Config);
-  __uint(max_entries, 1);
-} config_map SEC(".maps");
-
-// 取 netns 配置；返回 0 表示传统模式
-static __inline struct Config *get_config(void) {
-  __u32 cfg_key = 0;
-  return bpf_map_lookup_elem(&config_map, &cfg_key);
-}
-
 SEC("tc") // rx
 int tc_ingress(struct __sk_buff *skb) {
     const int l3_off = ETH_HLEN;    // IP header offset
@@ -84,14 +70,13 @@ int tc_ingress(struct __sk_buff *skb) {
             bpf_skb_store_bytes(skb, l4_off + offsetof(struct tcphdr, dest), (void *)&client_port, 2, 0);
             bpf_l4_csum_replace(skb, l4_off + offsetof(struct tcphdr, check), 0, sum, BPF_F_PSEUDO_HDR);
 
-            // netns 模式：目的 IP 一并改写到 ns 内服务地址（DNAT），
-            // 包随后按路由走向 veth（纯转发，宿主不产生 socket）。
-            // 入方向包为软件校验和状态，IP 头增量修正安全。
-            struct Config *cfg = get_config();
-            if (cfg != 0 && cfg->nativeip != 0) {
+            // netns 路由（表项 nativeip 非 0）：目的 IP 一并改写到 ns 内
+            // 服务地址（DNAT），包随后按路由走向 veth（纯转发，宿主不产生
+            // socket）。入方向包为软件校验和状态，IP 头增量修正安全。
+            if (value->nativeip != 0) {
                 const __be32 old_ip = ip4->daddr;
-                __wsum l3sum = bpf_csum_diff((void *)&old_ip, 4, (void *)&cfg->nativeip, 4, 0);
-                bpf_skb_store_bytes(skb, l3_off + offsetof(struct iphdr, daddr), (void *)&cfg->nativeip, 4, 0);
+                __wsum l3sum = bpf_csum_diff((void *)&old_ip, 4, (void *)&value->nativeip, 4, 0);
+                bpf_skb_store_bytes(skb, l3_off + offsetof(struct iphdr, daddr), (void *)&value->nativeip, 4, 0);
                 bpf_l3_csum_replace(skb, l3_off + offsetof(struct iphdr, check), 0, l3sum, 0);
             }
 
@@ -142,22 +127,21 @@ int tc_egress(struct __sk_buff *skb) {
             destPort == value->cport &&
             value->connport != 0) {
 
-            struct Config *cfg = get_config();
-            if (cfg != 0 && cfg->nativeip != 0 && sourceIp == cfg->nativeip) {
-                // netns 模式：来自 ns 的回包 → 全量 SNAT（IP+端口）。
-                // veth 的 TX 校验和卸载已在用户态关闭，此处包为软件校验和
+            if (value->nativeip != 0 && sourceIp == value->nativeip) {
+                // netns 路由：来自 ns 的回包 → 全量 SNAT（IP+端口）。
+                // veth 的 TX 校验和卸载已由用户态关闭，此处包为软件校验和
                 // 状态，L3/L4 增量修正均安全（改 IP 必须修伪头，故不可跳过）
                 const __be32 sourceport = value->connport;
                 const __be32 old_port = tcph->source;
                 const __be32 old_ip = ip4->saddr;
-                __wsum l3sum = bpf_csum_diff((void *)&old_ip, 4, (void *)&cfg->hostip, 4, 0);
+                __wsum l3sum = bpf_csum_diff((void *)&old_ip, 4, (void *)&value->hostip, 4, 0);
                 __wsum l4sum = bpf_csum_diff((void *)&old_port, 4, (void *)&sourceport, 4, 0);
-                bpf_skb_store_bytes(skb, l3_off + offsetof(struct iphdr, saddr), (void *)&cfg->hostip, 4, 0);
+                bpf_skb_store_bytes(skb, l3_off + offsetof(struct iphdr, saddr), (void *)&value->hostip, 4, 0);
                 bpf_l3_csum_replace(skb, l3_off + offsetof(struct iphdr, check), 0, l3sum, 0);
                 bpf_skb_store_bytes(skb, l4_off + offsetof(struct tcphdr, source), (void *)&sourceport, 2, 0);
                 bpf_l4_csum_replace(skb, l4_off + offsetof(struct tcphdr, check), 0, l4sum, BPF_F_PSEUDO_HDR);
-            } else if (cfg == 0 || cfg->nativeip == 0) {
-                // 传统模式：只改端口，刻意不修 TCP 校验和：本机产生的回包在
+            } else if (value->nativeip == 0) {
+                // 普通路由：只改端口，刻意不修 TCP 校验和：本机产生的回包在
                 // TX 校验和卸载开启（默认）时为 CHECKSUM_PARTIAL，字段里只有
                 // 伪头种子，网卡发送时会对改写后的新端口重新求和；若再调
                 // bpf_l4_csum_replace 做增量修正，端口差值会被重复计入（实测

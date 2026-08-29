@@ -23,14 +23,8 @@ struct Router {
   __be16 cport;       // 控制端口
   __be16 connport;    // 通讯端口，通过这个端口出网
   __be16 nativeport;  // 本地端口，实际提供功能的端口
-};
-
-// netns 隐藏模式的全局配置（config_map，key 恒为 0，由用户态注入）：
-// nativeip 为 0 表示传统模式（只改端口）；非 0 时 ingress 做 DNAT 到
-// netns 内服务地址，egress 对来自 nativeip 的回包做 SNAT 回 hostip。
-struct Config {
-  __be32 nativeip;    // netns 内服务地址（如 10.0.0.2）
-  __be32 hostip;      // 宿主对外地址（回包 SNAT 的源 IP）
+  __be32 nativeip;    // netns 路由：ns 内服务地址；0 = 普通路由（只改端口）
+  __be32 hostip;      // netns 路由：回包 SNAT 的源 IP（宿主对外地址）
 };
 
 #pragma pack()
